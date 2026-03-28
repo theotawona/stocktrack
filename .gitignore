@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+
+# Database (ephemeral on Streamlit Cloud — regenerated from seed data)
+*.db
+*.db-shm
+*.db-wal
+
+# Logs (ephemeral — not needed in repo)
+logs/
+
+# Streamlit secrets (set via Streamlit Cloud dashboard, never commit)
+.streamlit/secrets.toml
+
+# Environment
+.env
+.venv/
+venv/
+env/
+
+# OS
+.DS_Store
+Thumbs.db

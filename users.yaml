@@ -1,0 +1,32 @@
+cookie:
+  expiry_days: 7
+  key: CHANGE_ME_IN_PRODUCTION_USE_A_LONG_RANDOM_STRING
+  name: stocktrack_auth
+credentials:
+  usernames:
+    Cynthia:
+      email: cynthia@globvest.com
+      name: Cynthia Charewa
+      password: $2b$12$vgm3Ejr0Gl86NTlufckc0el2eSGsxlnmFiaEyZFr5pHzQCTxRY9HO
+      property_id: 2
+      role: staff
+    admin:
+      email: admin@stocktrack.co.za
+      name: Administrator
+      password: $2b$12$nRftVFpMBRDSLvIO3fijb.zcGt/FDLsFXDvbxNQ2BvK71EG8PxbgC
+      property_id: null
+      role: admin
+    manager:
+      email: manager@stocktrack.co.za
+      name: Property Manager
+      password: $2b$12$.dnpr59zjvM/KkOooKmKYe7oTPIbO/ZMtvsA4eq4vRoy2gzbSGyVe
+      property_id: null
+      role: manager
+    staff:
+      email: staff@stocktrack.co.za
+      name: Storeroom Staff
+      password: $2b$12$N18MneC1dGiEanPHwl73.ueq2KnbDEnSE.KJGioxZQXPaK/9ODCrC
+      property_id: 1
+      role: staff
+preauthorized:
+  emails: []
