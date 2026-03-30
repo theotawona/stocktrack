@@ -76,28 +76,32 @@ def render_stock(username, sel_prop_id, sel_room_id, _safe_int, _room_opts, _sup
         from issuance_slip import generate_movement_slip, movement_slip_download_button
         import datetime as _dt
 
-        ui.section("Add new item")
+        ui.section("Add new items")
+        st.caption("Build up a basket of items to add, then submit all at once and download a single movement slip.")
         room_opts = _room_opts(sel_prop_id)
         sup_opts  = _sup_opts()
 
         if not room_opts:
             st.warning("Add a storeroom first.")
         else:
-            with st.form("add_item"):
+            if "_new_items_basket" not in st.session_state:
+                st.session_state["_new_items_basket"] = []
+
+            with st.form("add_item_to_basket", clear_on_submit=True):
                 c1, c2, c3 = st.columns(3)
                 item_name = c1.text_input("Item name *")
                 item_room = c2.selectbox("Storeroom *", list(room_opts.keys()))
                 item_cat  = c3.selectbox("Category", CATEGORIES)
                 c4, c5, c6, c7 = st.columns(4)
-                item_qty  = c4.number_input("Quantity",          min_value=0.0, step=1.0)
+                item_qty  = c4.number_input("Quantity",            min_value=0.0, step=1.0)
                 item_uom  = c5.selectbox("Unit", UOMS)
                 item_min  = c6.number_input("Low-stock threshold", min_value=0.0, value=1.0, step=1.0)
-                item_cost = c7.number_input("Unit cost (R)",      min_value=0.0, step=0.50)
+                item_cost = c7.number_input("Unit cost (R)",       min_value=0.0, step=0.50)
                 c8, c9    = st.columns([2, 1])
                 item_desc = c8.text_input("Description / notes")
                 item_sup  = c9.selectbox("Supplier", list(sup_opts.keys()))
 
-                if st.form_submit_button("Add item", type="primary"):
+                if st.form_submit_button("Add to basket"):
                     errs = v.validate_item_form(item_name, item_room, item_qty, item_min, item_cost)
                     ok_low, warn_msg = v.min_lte_qty(item_qty, item_min)
                     if errs:
@@ -105,43 +109,84 @@ def render_stock(username, sel_prop_id, sel_room_id, _safe_int, _room_opts, _sup
                     else:
                         if not ok_low:
                             st.warning(warn_msg)
+                        st.session_state["_new_items_basket"].append({
+                            "name": item_name.strip(),
+                            "room_label": item_room,
+                            "room_id": room_opts[item_room],
+                            "cat": item_cat,
+                            "qty": item_qty,
+                            "uom": item_uom,
+                            "min_qty": item_min,
+                            "cost": item_cost,
+                            "desc": item_desc.strip(),
+                            "sup_id": sup_opts[item_sup],
+                        })
+                        st.success(f"'{item_name.strip()}' added to basket.")
+
+            new_basket = st.session_state["_new_items_basket"]
+            if new_basket:
+                st.write(f"**{len(new_basket)} item(s) in basket:**")
+                for idx, entry in enumerate(new_basket):
+                    col_a, col_b = st.columns([5, 1])
+                    col_a.write(
+                        f"{idx+1}. **{entry['name']}** — {entry['room_label']} | "
+                        f"{entry['qty']:g} {entry['uom']} @ R{entry['cost']:g}"
+                    )
+                    if col_b.button("Remove", key=f"rm_new_{idx}"):
+                        st.session_state["_new_items_basket"].pop(idx)
+                        st.rerun()
+
+                batch_notes = st.text_input("Notes for slip (optional)", key="new_items_batch_notes")
+
+                if st.button("✅ Submit all & generate slip", type="primary", key="submit_new_items_btn"):
+                    slip_items = []
+                    errors = []
+                    for entry in new_basket:
                         try:
                             db.add_item(
-                                room_opts[item_room], item_name.strip(), item_cat,
-                                item_uom, item_qty, item_min,
-                                sup_opts[item_sup], item_cost, item_desc.strip(),
+                                entry["room_id"], entry["name"], entry["cat"],
+                                entry["uom"], entry["qty"], entry["min_qty"],
+                                entry["sup_id"], entry["cost"], entry["desc"],
                             )
-                            logger.info("Item '%s' added by %s", item_name, username)
-                            st.success(f"'{item_name}' added.")
-                            # Generate movement slip for the new item addition
-                            slip_num = "SMV-" + _dt.datetime.now().strftime("%Y%m%d%H%M%S")
-                            movement = {
-                                "slip_number": slip_num,
-                                "movement_date": _dt.datetime.now().strftime("%d %B %Y %H:%M"),
-                                "recorded_by": username,
-                                "property_name": item_room,
-                                "reason": "New item added",
-                                "notes": item_desc.strip() if item_desc else "",
-                                "items": [{
-                                    "name": item_name.strip(),
-                                    "storeroom": item_room,
-                                    "qty_before": 0,
-                                    "change": item_qty,
-                                    "qty_after": item_qty,
-                                    "uom": item_uom,
-                                }],
-                            }
-                            st.session_state["_add_item_slip"] = (generate_movement_slip(movement), slip_num)
-                            st.rerun()
+                            logger.info("Batch add item '%s' by %s", entry["name"], username)
+                            slip_items.append({
+                                "name": entry["name"],
+                                "storeroom": entry["room_label"],
+                                "qty_before": 0,
+                                "change": entry["qty"],
+                                "qty_after": entry["qty"],
+                                "uom": entry["uom"],
+                            })
                         except Exception as exc:
-                            logger.error("add_item failed: %s", exc)
-                            st.error("Could not add item.")
+                            logger.error("add_item failed for '%s': %s", entry["name"], exc)
+                            errors.append(entry["name"])
 
-        if st.session_state.get("_add_item_slip"):
-            slip_html, slip_num = st.session_state["_add_item_slip"]
+                    if errors:
+                        st.error(f"Failed to add: {', '.join(errors)}")
+
+                    if slip_items:
+                        storerooms = list(dict.fromkeys(e["room_label"] for e in new_basket))
+                        prop_label = storerooms[0] if len(storerooms) == 1 else ", ".join(storerooms[:3])
+                        slip_num = "SMV-" + _dt.datetime.now().strftime("%Y%m%d%H%M%S")
+                        movement = {
+                            "slip_number": slip_num,
+                            "movement_date": _dt.datetime.now().strftime("%d %B %Y %H:%M"),
+                            "recorded_by": username,
+                            "property_name": prop_label,
+                            "reason": "New items added",
+                            "notes": batch_notes.strip() if batch_notes else "",
+                            "items": slip_items,
+                        }
+                        st.session_state["_new_items_slip"] = (generate_movement_slip(movement), slip_num)
+                        st.session_state["_new_items_basket"] = []
+                        st.success(f"{len(slip_items)} item(s) added to stock.")
+                        st.rerun()
+
+        if st.session_state.get("_new_items_slip"):
+            slip_html, slip_num = st.session_state["_new_items_slip"]
             movement_slip_download_button(slip_html, slip_num, st)
-            if st.button("Clear slip", key="clear_add_item_slip"):
-                del st.session_state["_add_item_slip"]
+            if st.button("Clear slip", key="clear_new_items_slip"):
+                del st.session_state["_new_items_slip"]
                 st.rerun()
 
         if not items_df.empty:
