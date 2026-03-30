@@ -161,11 +161,16 @@ def export_csv(df, filename: str) -> None:
     import io
     buf = io.StringIO()
     df.to_csv(buf, index=False)
+    csv_data = buf.getvalue()
+    # Keep button identity stable and avoid rerun-on-click to reduce stale media-id races.
+    key = f"csv_download_{filename}_{len(df)}_{len(df.columns)}"
     st.download_button(
         "⬇ Export CSV",
-        buf.getvalue(),
+        csv_data,
         file_name=filename,
         mime="text/csv",
+        key=key,
+        on_click="ignore",
     )
 
 
