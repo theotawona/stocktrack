@@ -461,6 +461,53 @@ def get_issuances(property_id=None, storeroom_id=None, month=None, recipient=Non
     with get_conn() as conn:
         return pd.read_sql(q, conn, params=params)
 
+
+def get_issued_to_user(username, property_id=None, date_from=None, date_to=None):
+    """Return issuances where recipient is the given user, with requisition usage-report status."""
+    q = """
+        SELECT iss.id as issuance_id,
+               iss.issued_date,
+               iss.qty,
+               iss.note,
+               iss.issued_by,
+               iss.recipient,
+               i.name as item_name,
+               i.uom,
+               s.name as storeroom_name,
+               p.name as property_name,
+               iss.requisition_id,
+               r.ref_number,
+               r.purpose,
+               CASE
+                 WHEN iss.requisition_id IS NOT NULL AND EXISTS (
+                     SELECT 1
+                     FROM requisition_usage_reports ur
+                     WHERE ur.requisition_id = iss.requisition_id
+                       AND LOWER(ur.username) = LOWER(?)
+                 ) THEN 1
+                 ELSE 0
+               END as usage_reported
+        FROM issuances iss
+        JOIN items i ON i.id = iss.item_id
+        JOIN storerooms s ON s.id = i.storeroom_id
+        JOIN properties p ON p.id = s.property_id
+        LEFT JOIN requisitions r ON r.id = iss.requisition_id
+        WHERE LOWER(iss.recipient) = LOWER(?)
+    """
+    params = [username, username]
+    if property_id:
+        q += " AND p.id = ?"
+        params.append(property_id)
+    if date_from:
+        q += " AND date(iss.issued_date) >= ?"
+        params.append(str(date_from))
+    if date_to:
+        q += " AND date(iss.issued_date) <= ?"
+        params.append(str(date_to))
+    q += " ORDER BY iss.issued_date DESC, iss.id DESC"
+    with get_conn() as conn:
+        return pd.read_sql(q, conn, params=params)
+
 def add_issuance(item_id, recipient, issued_by, qty, issued_date, note):
     with get_conn() as conn:
         item = conn.execute("SELECT qty FROM items WHERE id=?", (item_id,)).fetchone()

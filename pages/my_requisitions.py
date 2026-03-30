@@ -131,6 +131,108 @@ def render_my_requisitions(username, role, sel_prop_id, sel_room_id, _item_opts)
             st.session_state.req_custom_basket = []
             st.rerun()
 
+    if role == "staff":
+        ui.section("Stock issued to you")
+        sf1, sf2, sf3 = st.columns([2, 1, 1])
+        issued_status_filter = sf1.selectbox(
+            "Usage status",
+            ["All", "Pending usage report", "Usage reported"],
+            key="issued_to_me_status",
+            label_visibility="collapsed",
+        )
+        issued_date_from = sf2.date_input("From", value=None, key="issued_to_me_date_from")
+        issued_date_to = sf3.date_input("To", value=None, key="issued_to_me_date_to")
+        issued_search = st.text_input(
+            "Search item or requisition",
+            key="issued_to_me_search",
+            placeholder="e.g. Toilet Rolls or REQ-202603",
+        )
+
+        try:
+            issued_df = db.get_issued_to_user(
+                username=username,
+                property_id=sel_prop_id,
+                date_from=issued_date_from or None,
+                date_to=issued_date_to or None,
+            )
+        except Exception as exc:
+            logger.error("get_issued_to_user failed: %s", exc)
+            issued_df = db.pd.DataFrame()
+            st.error("Could not load issued stock.")
+
+        if issued_df.empty:
+            st.info("No stock has been issued to you yet.")
+        else:
+            issued_df = issued_df.copy()
+            issued_df["Usage status"] = issued_df.apply(
+                lambda r: (
+                    "Usage reported"
+                    if int(r.get("usage_reported", 0)) == 1
+                    else ("Pending usage report" if r.get("requisition_id") else "No requisition")
+                ),
+                axis=1,
+            )
+
+            if issued_search.strip():
+                q = issued_search.strip().lower()
+                issued_df = issued_df[
+                    issued_df["item_name"].fillna("").str.lower().str.contains(q)
+                    | issued_df["ref_number"].fillna("").str.lower().str.contains(q)
+                ]
+
+            if issued_status_filter != "All":
+                issued_df = issued_df[issued_df["Usage status"] == issued_status_filter]
+
+            if issued_df.empty:
+                st.info("No issued-stock rows match your filters.")
+            else:
+                issued_dates = db.pd.to_datetime(issued_df["issued_date"], errors="coerce")
+                month_start = db.pd.Timestamp.today().replace(day=1).normalize()
+                units_this_month = float(issued_df.loc[issued_dates >= month_start, "qty"].sum())
+                pending_reports = int((issued_df["Usage status"] == "Pending usage report").sum())
+                last_issued = str(issued_df.iloc[0]["issued_date"])[:10]
+                ui.metric_row([
+                    ("Units issued to you (month)", int(units_this_month), "", "info"),
+                    ("Pending usage reports", pending_reports, "", "warning" if pending_reports else "ok"),
+                    ("Last issued date", last_issued, "", "info"),
+                ])
+
+                show = issued_df[[
+                    "issued_date", "item_name", "qty", "uom", "ref_number",
+                    "issued_by", "property_name", "storeroom_name", "Usage status"
+                ]].copy()
+                show.columns = [
+                    "Date", "Item", "Qty", "UOM", "Requisition", "Issued by",
+                    "Property", "Storeroom", "Usage"
+                ]
+                st.dataframe(show, width='stretch', hide_index=True)
+
+                pending = issued_df[
+                    (issued_df["Usage status"] == "Pending usage report")
+                    & issued_df["requisition_id"].notna()
+                ][["requisition_id", "ref_number", "purpose"]].drop_duplicates()
+
+                if not pending.empty:
+                    st.markdown("**Quick usage reporting**")
+                    for _, row in pending.iterrows():
+                        req_id = int(row["requisition_id"])
+                        label = str(row.get("ref_number") or f"REQ {req_id}")
+                        purpose = str(row.get("purpose") or "No purpose provided")
+                        txt_key = f"quick_usage_text_{req_id}"
+                        st.caption(f"{label} · {purpose}")
+                        usage_text = st.text_area(
+                            "How was this stock used?",
+                            key=txt_key,
+                            placeholder="Example: Issued 4 bulbs to Unit B12 corridor maintenance.",
+                        )
+                        if st.button("Submit usage report", key=f"quick_usage_btn_{req_id}"):
+                            if usage_text.strip():
+                                db.add_usage_report(req_id, username, usage_text.strip())
+                                st.success(f"Usage report submitted for {label}.")
+                                st.rerun()
+                            else:
+                                st.warning("Please enter a usage report.")
+
     ui.section("My requisitions")
     from datetime import date as _date
     mf1, mf2, mf3 = st.columns([2, 1, 1])
