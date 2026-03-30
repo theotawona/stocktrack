@@ -6,6 +6,11 @@ from logger import logger
 
 
 def render_stock(username, sel_prop_id, sel_room_id, _safe_int, _room_opts, _sup_opts, CATEGORIES, UOMS):
+    # Show toast if a quantity adjustment was just applied
+    _adj_msg = st.session_state.pop("_adj_toast", None)
+    if _adj_msg:
+        st.toast(_adj_msg, icon="✅")
+
     import auth as auth_module
     role = auth_module.current_role() if hasattr(auth_module, 'current_role') else st.session_state.get('role', 'staff')
     # If staff, force property filter to their assigned property
@@ -129,7 +134,8 @@ def render_stock(username, sel_prop_id, sel_room_id, _safe_int, _room_opts, _sup
                         try:
                             db.adjust_qty(item_names[sel_item], delta)
                             logger.info("Qty adjusted %+.0f on item %s by %s", delta, item_names[sel_item], username)
-                            st.success("Quantity updated.")
+                            sign = "+" if delta > 0 else ""
+                            st.session_state["_adj_toast"] = f"✅ {sel_item.split(' (')[0]}: {sign}{int(delta)} applied."
                             st.rerun()
                         except Exception as exc:
                             logger.error("adjust_qty failed: %s", exc)
