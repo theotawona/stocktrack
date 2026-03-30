@@ -24,9 +24,9 @@ def render_my_requisitions(username, role, sel_prop_id, sel_room_id, _item_opts)
         sel_prop_id = staff_prop_id
     item_opts_all = _item_opts(property_id=sel_prop_id, storeroom_id=sel_room_id)
 
-    # Show toast if an item was just added to the basket
+    # Show inline success cue if an item was just added to the basket
     if st.session_state.pop("_basket_added_msg", None):
-        st.toast(st.session_state.pop("_basket_added_msg_text", "Item added to basket."), icon="✅")
+        st.success(st.session_state.pop("_basket_added_msg_text", "Item added to basket."))
 
     with st.expander("+ New requisition", expanded=False):
         with st.form("req_header", clear_on_submit=False):
