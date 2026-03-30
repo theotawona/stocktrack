@@ -6,11 +6,6 @@ from logger import logger
 
 
 def render_stock(username, sel_prop_id, sel_room_id, _safe_int, _room_opts, _sup_opts, CATEGORIES, UOMS):
-    # Show toast if a quantity adjustment was just applied
-    _adj_msg = st.session_state.pop("_adj_toast", None)
-    if _adj_msg:
-        st.toast(_adj_msg, icon="✅")
-
     import auth as auth_module
     role = auth_module.current_role() if hasattr(auth_module, 'current_role') else st.session_state.get('role', 'staff')
     # If staff, force property filter to their assigned property
@@ -123,6 +118,9 @@ def render_stock(username, sel_prop_id, sel_room_id, _safe_int, _room_opts, _sup
         if not items_df.empty:
             ui.section("Quick quantity adjustment")
             item_names = {f"{r['name']} ({r['storeroom_name']})": _safe_int(r["id"]) for _, r in items_df.iterrows()}
+            _adj_msg = st.session_state.pop("_adj_success_msg", None)
+            if _adj_msg:
+                st.success(_adj_msg)
             _adj_v = st.session_state.get("_adj_form_v", 0)
             _PLACEHOLDER = "— Select an item —"
             with st.form(f"adj_qty_{_adj_v}"):
@@ -139,7 +137,7 @@ def render_stock(username, sel_prop_id, sel_room_id, _safe_int, _room_opts, _sup
                             db.adjust_qty(item_names[sel_item], delta)
                             logger.info("Qty adjusted %+.0f on item %s by %s", delta, item_names[sel_item], username)
                             sign = "+" if delta > 0 else ""
-                            st.session_state["_adj_toast"] = f"✅ {sel_item.split(' (')[0]}: {sign}{int(delta)} applied."
+                            st.session_state["_adj_success_msg"] = f"{sel_item.split(' (')[0]}: {sign}{int(delta)} applied."
                             st.session_state["_adj_form_v"] = _adj_v + 1
                             st.rerun()
                         except Exception as exc:
