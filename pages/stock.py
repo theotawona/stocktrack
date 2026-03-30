@@ -118,7 +118,7 @@ def render_stock(username, sel_prop_id, sel_room_id, _safe_int, _room_opts, _sup
         if not items_df.empty:
             ui.section("Quick quantity adjustment")
             item_names = {f"{r['name']} ({r['storeroom_name']})": _safe_int(r["id"]) for _, r in items_df.iterrows()}
-            _adj_msg = st.session_state.pop("_adj_success_msg", None)
+            _adj_msg = st.session_state.get("_adj_success_msg")
             if _adj_msg:
                 st.success(_adj_msg)
             _adj_v = st.session_state.get("_adj_form_v", 0)
