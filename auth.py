@@ -18,7 +18,7 @@ ROLE_PERMISSIONS: dict = {
         "Issue Stock", "Reconciliation",
         "Issuance Log", "Reorder List", "History",
         "Properties", "Suppliers",
-        "My Requisitions", "Requisition Approvals", "Disperse Stock",
+        "My Requisitions", "Requisition Approvals",
         "Users",
     ],
     "manager": [

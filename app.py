@@ -143,7 +143,7 @@ with st.sidebar:
     nav = {
         "MAIN":         ["Overview", "Storerooms", "Stock"],
         "OPERATIONS":   ["Issue Stock", "Reconciliation"],
-        "REQUISITIONS": ["My Requisitions", "Requisition Approvals", "Disperse Stock"],
+        "REQUISITIONS": ["My Requisitions", "Requisition Approvals"],
         "REPORTS":      ["Issuance Log", "Reorder List", "History"],
         "SETTINGS":     ["Properties", "Suppliers"],
     }
@@ -239,7 +239,6 @@ import pages.suppliers as suppliers_page
 import pages.users as users_page
 import pages.my_requisitions as my_requisitions_page
 import pages.requisition_approvals as req_approvals_page
-import pages.disperse_stock as disperse_stock_page
 
 # ══════════════════════════════════════════════════════════════
 # OVERVIEW
@@ -314,8 +313,3 @@ elif page == "My Requisitions":
 # ══════════════════════════════════════════════════════════════
 elif page == "Requisition Approvals":
     req_approvals_page.render_requisition_approvals(username, sel_prop_id, _safe_int)
-# ══════════════════════════════════════════════════════════════
-# DISPERSE STOCK
-# ══════════════════════════════════════════════════════════════
-elif page == "Disperse Stock":
-    disperse_stock_page.render_disperse_stock(username, sel_prop_id, _safe_int)
