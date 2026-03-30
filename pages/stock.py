@@ -73,6 +73,9 @@ def render_stock(username, sel_prop_id, sel_room_id, _safe_int, _room_opts, _sup
 
     # Only allow add/adjust for non-staff
     if role != "staff":
+        from issuance_slip import generate_movement_slip, movement_slip_download_button
+        import datetime as _dt
+
         ui.section("Add new item")
         room_opts = _room_opts(sel_prop_id)
         sup_opts  = _sup_opts()
@@ -110,15 +113,38 @@ def render_stock(username, sel_prop_id, sel_room_id, _safe_int, _room_opts, _sup
                             )
                             logger.info("Item '%s' added by %s", item_name, username)
                             st.success(f"'{item_name}' added.")
+                            # Generate movement slip for the new item addition
+                            slip_num = "SMV-" + _dt.datetime.now().strftime("%Y%m%d%H%M%S")
+                            movement = {
+                                "slip_number": slip_num,
+                                "movement_date": _dt.datetime.now().strftime("%d %B %Y %H:%M"),
+                                "recorded_by": username,
+                                "property_name": item_room,
+                                "reason": "New item added",
+                                "notes": item_desc.strip() if item_desc else "",
+                                "items": [{
+                                    "name": item_name.strip(),
+                                    "storeroom": item_room,
+                                    "qty_before": 0,
+                                    "change": item_qty,
+                                    "qty_after": item_qty,
+                                    "uom": item_uom,
+                                }],
+                            }
+                            st.session_state["_add_item_slip"] = (generate_movement_slip(movement), slip_num)
                             st.rerun()
                         except Exception as exc:
                             logger.error("add_item failed: %s", exc)
                             st.error("Could not add item.")
 
-        if not items_df.empty:
-            from issuance_slip import generate_movement_slip, movement_slip_download_button
-            import datetime as _dt
+        if st.session_state.get("_add_item_slip"):
+            slip_html, slip_num = st.session_state["_add_item_slip"]
+            movement_slip_download_button(slip_html, slip_num, st)
+            if st.button("Clear slip", key="clear_add_item_slip"):
+                del st.session_state["_add_item_slip"]
+                st.rerun()
 
+        if not items_df.empty:
             _ADJ_REASONS = ["Count correction", "Damage / Loss", "Supplier delivery", "Write-off", "Other"]
 
             # ── Single adjustment ────────────────────────────────────────────
