@@ -816,6 +816,104 @@ def get_requisition_lines_remaining(requisition_id):
         """, conn, params=[requisition_id])
 
 
+def get_requisition_custom_lines_remaining(requisition_id):
+    """Return unlisted/custom lines that have not yet been fully marked as fulfilled."""
+    with get_conn() as conn:
+        return pd.read_sql("""
+            SELECT rl.id, rl.requisition_id, rl.custom_item_name as item_name,
+                   COALESCE(rl.custom_uom, 'units') as uom,
+                   COALESCE(rl.custom_notes, '') as notes,
+                   COALESCE(rl.qty_approved, 0) as qty_approved,
+                   COALESCE(rl.qty_dispersed, 0) as qty_dispersed,
+                   (COALESCE(rl.qty_approved, 0) - COALESCE(rl.qty_dispersed, 0)) as qty_remaining
+            FROM requisition_lines rl
+            WHERE rl.requisition_id = ?
+              AND COALESCE(rl.is_custom, 0) = 1
+              AND COALESCE(rl.qty_approved, 0) > 0
+        """, conn, params=[requisition_id])
+
+
+def mark_custom_line_fulfilled(line_id, issued_by, req_id,
+                               storeroom_id=None, category="General",
+                               unit_cost=0.0, issued_date=None, note=None):
+    """Mark a custom requisition line as fulfilled.
+    If storeroom_id is provided, the item is added to the stock catalogue (qty=0)
+    and an issuance record is created so it appears in future selectboxes.
+    Returns (new_status, item_id or None).
+    """
+    from datetime import date as _date
+    with get_conn() as conn:
+        line = conn.execute(
+            """SELECT rl.*, r.requested_by, r.ref_number
+               FROM requisition_lines rl
+               JOIN requisitions r ON r.id = rl.requisition_id
+               WHERE rl.id=? AND COALESCE(rl.is_custom,0)=1""",
+            (line_id,)
+        ).fetchone()
+        if not line:
+            raise ValueError("Custom line not found.")
+
+        qty = line["qty_approved"] or 0
+        item_id = None
+
+        if storeroom_id:
+            # Add to stock catalogue with qty=0 (item is being issued directly to recipient)
+            conn.execute(
+                """INSERT INTO items
+                     (storeroom_id, name, category, uom, qty, min_qty,
+                      unit_cost, description, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, 0, 0, ?, ?, datetime('now'), datetime('now'))""",
+                (
+                    storeroom_id,
+                    line["custom_item_name"],
+                    category,
+                    line["custom_uom"] or "units",
+                    unit_cost,
+                    line["custom_notes"] or "",
+                )
+            )
+            item_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+
+            # Create issuance record so the item appears in issuance history
+            conn.execute(
+                """INSERT INTO issuances
+                     (item_id, recipient, issued_by, qty, issued_date, note,
+                      requisition_id, requisition_line_id)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    item_id,
+                    line["requested_by"],
+                    issued_by,
+                    qty,
+                    issued_date or str(_date.today()),
+                    note or f"Requisition {line['ref_number']}",
+                    req_id,
+                    line_id,
+                )
+            )
+
+        # Mark line as fully dispersed
+        conn.execute(
+            "UPDATE requisition_lines SET qty_dispersed=qty_approved WHERE id=?",
+            (line_id,)
+        )
+
+        # Recalculate requisition status
+        totals = conn.execute("""
+            SELECT SUM(COALESCE(qty_approved,0)) as total_approved,
+                   SUM(COALESCE(qty_dispersed,0)) as total_dispersed
+            FROM requisition_lines WHERE requisition_id=?
+        """, (req_id,)).fetchone()
+        total_approved = totals["total_approved"] or 0
+        total_dispersed = totals["total_dispersed"] or 0
+        new_status = "Issued" if total_approved > 0 and total_dispersed >= total_approved else "Partially Issued"
+        conn.execute(
+            "UPDATE requisitions SET status=?, dispersed_by=?, dispersed_at=datetime('now') WHERE id=?",
+            (new_status, issued_by, req_id)
+        )
+        return new_status, item_id
+
+
 def issue_against_requisition(req_id, issued_by, issued_date, note, lines_to_issue):
     """
     Issue stock against an approved requisition.

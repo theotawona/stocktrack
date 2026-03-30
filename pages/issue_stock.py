@@ -54,7 +54,7 @@ def render_issue_stock(username, sel_prop_id, sel_room_id, _item_opts):
             lines_df = db.pd.DataFrame()
 
         if lines_df.empty:
-            st.warning("This requisition has no approved items remaining to issue.")
+            st.warning("This requisition has no approved stocked items remaining to issue.")
         else:
             ui.section("Items to issue")
             hdr = st.columns([3, 1, 1, 1, 1])
@@ -157,6 +157,77 @@ def render_issue_stock(username, sel_prop_id, sel_room_id, _item_opts):
                         except Exception as exc:
                             logger.error("issue_against_requisition failed: %s", exc)
                             st.error(f"Could not record issuance: {exc}")
+
+        # ── Procured / unlisted items ──────────────────────────────────────
+        try:
+            custom_df = db.get_requisition_custom_lines_remaining(sel_req_id)
+        except Exception as exc:
+            logger.error("get_requisition_custom_lines_remaining failed: %s", exc)
+            custom_df = db.pd.DataFrame()
+
+        if not custom_df.empty:
+            ui.section("Procured / unlisted items")
+            st.caption(
+                "These items were requested but were not in stock. "
+                "Once you have received them, mark each as fulfilled to record the issuance "
+                "and add the item to the stock catalogue for future requisitions."
+            )
+            try:
+                rooms_df = db.get_storerooms(property_id=sel_prop_id)
+                room_opts = {
+                    f"{r['name']}": int(r['id'])
+                    for _, r in rooms_df.iterrows()
+                } if not rooms_df.empty else {}
+            except Exception:
+                room_opts = {}
+
+            _CATEGORIES = ["Cleaning", "Electrical", "Maintenance", "Plumbing", "Safety", "General", "Other"]
+            _PLACEHOLDER_ROOM = "— Select storeroom —"
+
+            for _, cline in custom_df.iterrows():
+                if float(cline["qty_remaining"]) <= 0:
+                    continue
+                with st.expander(
+                    f"📦 {cline['item_name']} — {int(cline['qty_approved'])} {cline['uom']}  *(pending procurement)*",
+                    expanded=True,
+                ):
+                    if cline["notes"]:
+                        st.caption(f"Notes / specs: {cline['notes']}")
+                    with st.form(f"custom_fulfill_{int(cline['id'])}"):
+                        cf1, cf2, cf3 = st.columns(3)
+                        room_sel = cf1.selectbox(
+                            "Add to storeroom *",
+                            [_PLACEHOLDER_ROOM] + list(room_opts.keys()),
+                        )
+                        cat_sel = cf2.selectbox("Category", _CATEGORIES)
+                        cost_sel = cf3.number_input("Unit cost (R)", min_value=0.0, step=0.50)
+                        if st.form_submit_button("✅ Mark as received & issue", type="primary"):
+                            if room_sel == _PLACEHOLDER_ROOM:
+                                st.warning("Please select a storeroom to assign this item to.")
+                            else:
+                                try:
+                                    new_status, new_item_id = db.mark_custom_line_fulfilled(
+                                        line_id=int(cline['id']),
+                                        issued_by=st.session_state.get("iss_by", username),
+                                        req_id=sel_req_id,
+                                        storeroom_id=room_opts[room_sel],
+                                        category=cat_sel,
+                                        unit_cost=cost_sel,
+                                        issued_date=str(st.session_state.get("iss_date", date.today())),
+                                        note=st.session_state.get("iss_note", ""),
+                                    )
+                                    logger.info(
+                                        "Custom line %s fulfilled by %s, item_id=%s, req status=%s",
+                                        cline['id'], username, new_item_id, new_status
+                                    )
+                                    st.success(
+                                        f"'{cline['item_name']}' added to stock catalogue and issued. "
+                                        f"Requisition status: **{new_status}**."
+                                    )
+                                    st.rerun()
+                                except Exception as exc:
+                                    logger.error("mark_custom_line_fulfilled failed: %s", exc)
+                                    st.error(f"Could not complete: {exc}")
 
     if st.session_state.get("issue_shortfalls"):
         ui.section("Items not fully issued")
