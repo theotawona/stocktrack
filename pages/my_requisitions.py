@@ -131,7 +131,8 @@ def render_my_requisitions(username, role, sel_prop_id, sel_room_id, _item_opts)
             st.session_state.req_custom_basket = []
             st.rerun()
 
-    if role in ("staff", "manager", "admin"):
+    role_norm = str(role or "").strip().lower()
+    if role_norm in ("staff", "manager", "admin"):
         ui.section("Stock issued to you")
         sf1, sf2, sf3 = st.columns([2, 1, 1])
         issued_status_filter = sf1.selectbox(
