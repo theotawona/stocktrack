@@ -123,12 +123,16 @@ def render_stock(username, sel_prop_id, sel_room_id, _safe_int, _room_opts, _sup
         if not items_df.empty:
             ui.section("Quick quantity adjustment")
             item_names = {f"{r['name']} ({r['storeroom_name']})": _safe_int(r["id"]) for _, r in items_df.iterrows()}
-            with st.form("adj_qty"):
+            _adj_v = st.session_state.get("_adj_form_v", 0)
+            _PLACEHOLDER = "— Select an item —"
+            with st.form(f"adj_qty_{_adj_v}"):
                 c1, c2, c3 = st.columns([3, 1, 1])
-                sel_item = c1.selectbox("Item", list(item_names.keys()))
+                sel_item = c1.selectbox("Item", [_PLACEHOLDER] + list(item_names.keys()))
                 delta    = c2.number_input("Change (+/−)", step=1.0)
                 if c3.form_submit_button("Apply", type="primary"):
-                    if delta == 0:
+                    if sel_item == _PLACEHOLDER:
+                        st.warning("Please select an item first.")
+                    elif delta == 0:
                         st.warning("No change — enter a non-zero value.")
                     else:
                         try:
@@ -136,6 +140,7 @@ def render_stock(username, sel_prop_id, sel_room_id, _safe_int, _room_opts, _sup
                             logger.info("Qty adjusted %+.0f on item %s by %s", delta, item_names[sel_item], username)
                             sign = "+" if delta > 0 else ""
                             st.session_state["_adj_toast"] = f"✅ {sel_item.split(' (')[0]}: {sign}{int(delta)} applied."
+                            st.session_state["_adj_form_v"] = _adj_v + 1
                             st.rerun()
                         except Exception as exc:
                             logger.error("adjust_qty failed: %s", exc)
