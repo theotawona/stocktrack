@@ -14,7 +14,7 @@ from logger import logger
 
 # ── Page config (must be first Streamlit call) ────────────────
 st.set_page_config(
-    page_title="StockTrack",
+    page_title="StockTrack by Corporate Analytica",
     page_icon="📦",
     layout="wide",
     initial_sidebar_state="expanded",
