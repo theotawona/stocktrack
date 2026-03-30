@@ -427,8 +427,13 @@ def update_item(id, storeroom_id, name, category, uom, qty, min_qty, supplier_id
 
 def adjust_qty(item_id, delta):
     with get_conn() as conn:
+        row = conn.execute("SELECT qty FROM items WHERE id=?", (item_id,)).fetchone()
+        qty_before = float(row["qty"]) if row else 0.0
         conn.execute("UPDATE items SET qty = MAX(0, qty + ?), updated_at=datetime('now') WHERE id=?",
                      (delta, item_id))
+        row_after = conn.execute("SELECT qty FROM items WHERE id=?", (item_id,)).fetchone()
+        qty_after = float(row_after["qty"]) if row_after else 0.0
+    return qty_before, qty_after
 
 def delete_item(id):
     with get_conn() as conn:
