@@ -1,0 +1,42 @@
+name: stocktrack
+services:
+- name: stocktrack-app
+  github:
+    branch: main
+    repo: YOUR_GITHUB_USERNAME/stocktrack  # Replace with your GitHub repo
+  build_command: ''
+  dockerfile_path: Dockerfile
+  source_dir: ''
+  http_port: 8501
+  envs:
+  - key: STREAMLIT_SERVER_HEADLESS
+    value: 'true'
+  - key: STREAMLIT_SERVER_PORT
+    value: '8501'
+  - key: STREAMLIT_LOGGER_LEVEL
+    value: info
+  health_check:
+    http_path: /_stcore/health
+  internal_ports:
+  - 8501
+  instance_count: 1
+  instance_size_slug: basic-xs  # $12/month for 0.25 vCPU, 512MB RAM
+  log_destinations:
+  - name: stocktrack-logs
+    papertrail:
+      token: ${PAPERTRAIL_API_TOKEN}  # Optional: for log aggregation
+static_sites: []
+jobs: []
+databases:
+- name: stocktrack-db
+  engine: MYSQL
+  version: '8'
+  production: true
+  # Note: SQLite will be stored as a volume
+volumes:
+- name: stocktrack-data
+  source_name: stocktrack-data
+  destination_path: /app/data
+domains:
+- domain: stocktrack.yourcompany.com  # Replace with your custom domain
+  type: PRIMARY

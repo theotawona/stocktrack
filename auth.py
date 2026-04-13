@@ -95,12 +95,15 @@ def get_authenticator():
     config = _load_config()
     cookie = config.get("cookie", {})
 
-    # Prefer secret injected via Streamlit Cloud dashboard; fall back to users.yaml value for local dev.
-    cookie_key = (
-        st.secrets.get("COOKIE_KEY")
-        if hasattr(st, "secrets") and "COOKIE_KEY" in st.secrets
-        else cookie.get("key", "CHANGE_ME_IN_PRODUCTION")
-    )
+    # Prefer secret injected via Streamlit Cloud; if unavailable locally, use users.yaml fallback.
+    cookie_key = cookie.get("key", "CHANGE_ME_IN_PRODUCTION")
+    try:
+        secrets_obj = getattr(st, "secrets", None)
+        if secrets_obj is not None:
+            cookie_key = secrets_obj.get("COOKIE_KEY", cookie_key)
+    except Exception:
+        # Local runs may have no secrets.toml configured.
+        pass
 
     # stauth 0.2.x: Authenticate(credentials, cookie_name, cookie_key, cookie_expiry_days)
     # stauth 0.3.x: Authenticate(credentials_dict, cookie_name, cookie_key, cookie_expiry_days)
