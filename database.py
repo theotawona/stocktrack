@@ -284,7 +284,7 @@ def init_db():
         # Older installs created requisition_lines.item_id as NOT NULL.
         # Mixed-basket requisitions store unlisted items with item_id = NULL.
         _ensure_requisition_lines_item_nullable(conn)
-        if os.environ.get("SEED_DEMO", "false").lower() == "true":
+        if os.environ.get("SEED_DEMO", "true").lower() == "true":
             _seed_demo_data(conn)
 
 
