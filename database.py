@@ -50,6 +50,62 @@ def get_requisition_comments(requisition_id):
             "SELECT * FROM requisition_comments WHERE requisition_id = ? ORDER BY created_at ASC",
             conn, params=[requisition_id]
         )
+
+# ── Stock Movement Invoices ────────────────────────────────
+def add_movement_invoice(slip_number, username, filename, filedata, mimetype):
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT INTO stock_movement_invoices (slip_number, username, filename, filedata, mimetype) VALUES (?,?,?,?,?)",
+            (slip_number, username, filename, filedata, mimetype)
+        )
+
+def get_movement_invoices(slip_number):
+    with get_conn() as conn:
+        return pd.read_sql(
+            "SELECT id, username, filename, mimetype, created_at FROM stock_movement_invoices WHERE slip_number = ? ORDER BY created_at DESC",
+            conn, params=[slip_number]
+        )
+
+def get_movement_invoice_file(invoice_id):
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT filename, filedata, mimetype FROM stock_movement_invoices WHERE id = ?",
+            (invoice_id,)
+        ).fetchone()
+        return row if row else None
+
+# ── Cost History ───────────────────────────────────────────
+def get_cost_history(item_id=None, property_id=None, limit=200):
+    q = """
+        SELECT ch.*, i.name as item_name, i.uom, s.name as storeroom_name, p.name as property_name
+        FROM cost_history ch
+        JOIN items i ON i.id = ch.item_id
+        JOIN storerooms s ON s.id = i.storeroom_id
+        JOIN properties p ON p.id = s.property_id
+        WHERE 1=1
+    """
+    params = []
+    if item_id:
+        q += " AND ch.item_id = ?"
+        params.append(item_id)
+    if property_id:
+        q += " AND p.id = ?"
+        params.append(property_id)
+    q += " ORDER BY ch.created_at DESC LIMIT ?"
+    params.append(limit)
+    with get_conn() as conn:
+        return pd.read_sql(q, conn, params=params)
+
+def get_cost_history_for_item(item_id):
+    q = """
+        SELECT ch.cost_before, ch.cost_after, ch.qty_delta, ch.reason, ch.changed_by, ch.created_at
+        FROM cost_history ch
+        WHERE ch.item_id = ?
+        ORDER BY ch.created_at ASC
+    """
+    with get_conn() as conn:
+        return pd.read_sql(q, conn, params=[item_id])
+
 import sqlite3
 import pandas as pd
 from datetime import datetime
@@ -185,6 +241,27 @@ def init_db():
             requisition_id INTEGER NOT NULL REFERENCES requisitions(id) ON DELETE CASCADE,
             username TEXT NOT NULL,
             comment TEXT NOT NULL,
+            created_at TEXT DEFAULT (datetime('now'))
+        );
+
+        CREATE TABLE IF NOT EXISTS stock_movement_invoices (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            slip_number TEXT NOT NULL,
+            username TEXT NOT NULL,
+            filename TEXT NOT NULL,
+            filedata BLOB NOT NULL,
+            mimetype TEXT,
+            created_at TEXT DEFAULT (datetime('now'))
+        );
+
+        CREATE TABLE IF NOT EXISTS cost_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+            cost_before REAL NOT NULL,
+            cost_after REAL NOT NULL,
+            qty_delta REAL DEFAULT 0,
+            reason TEXT,
+            changed_by TEXT,
             created_at TEXT DEFAULT (datetime('now'))
         );
         """)
@@ -411,12 +488,16 @@ def get_items(storeroom_id=None, property_id=None, low_stock_only=False):
     with get_conn() as conn:
         return pd.read_sql(q, conn, params=params)
 
-def add_item(storeroom_id, name, category, uom, qty, min_qty, supplier_id, unit_cost, description):
+def add_item(storeroom_id, name, category, uom, qty, min_qty, supplier_id, unit_cost, description, added_by=None):
     with get_conn() as conn:
-        conn.execute("""INSERT INTO items
+        cur = conn.execute("""INSERT INTO items
             (storeroom_id, name, category, uom, qty, min_qty, supplier_id, unit_cost, description, updated_at)
             VALUES (?,?,?,?,?,?,?,?,?,datetime('now'))""",
             (storeroom_id, name, category, uom, qty, min_qty, supplier_id or None, unit_cost, description))
+        if unit_cost and unit_cost > 0:
+            conn.execute(
+                "INSERT INTO cost_history (item_id, cost_before, cost_after, qty_delta, reason, changed_by) VALUES (?,?,?,?,?,?)",
+                (cur.lastrowid, 0.0, unit_cost, qty, 'Initial stock load', added_by))
 
 def update_item(id, storeroom_id, name, category, uom, qty, min_qty, supplier_id, unit_cost, description):
     with get_conn() as conn:
@@ -425,15 +506,42 @@ def update_item(id, storeroom_id, name, category, uom, qty, min_qty, supplier_id
             WHERE id=?""",
             (storeroom_id, name, category, uom, qty, min_qty, supplier_id or None, unit_cost, description, id))
 
-def adjust_qty(item_id, delta):
+def adjust_qty(item_id, delta, new_unit_cost=None, changed_by=None, reason=None):
+    """Adjust quantity and optionally update unit cost using weighted average costing.
+
+    When adding stock (delta > 0) with a new_unit_cost, the unit cost is recalculated
+    as a weighted average:
+        new_cost = ((old_qty × old_cost) + (delta × new_unit_cost)) / new_total_qty
+
+    When only setting cost (delta == 0) or removing stock (delta < 0), the cost is
+    set directly to new_unit_cost if provided.
+    """
     with get_conn() as conn:
-        row = conn.execute("SELECT qty FROM items WHERE id=?", (item_id,)).fetchone()
+        row = conn.execute("SELECT qty, unit_cost FROM items WHERE id=?", (item_id,)).fetchone()
         qty_before = float(row["qty"]) if row else 0.0
+        cost_before = float(row["unit_cost"]) if row else 0.0
         conn.execute("UPDATE items SET qty = MAX(0, qty + ?), updated_at=datetime('now') WHERE id=?",
                      (delta, item_id))
-        row_after = conn.execute("SELECT qty FROM items WHERE id=?", (item_id,)).fetchone()
+        if new_unit_cost is not None:
+            if delta > 0 and qty_before > 0:
+                # Weighted average costing: blend old and new cost
+                total_qty = qty_before + delta
+                weighted_cost = ((qty_before * cost_before) + (delta * new_unit_cost)) / total_qty
+                conn.execute("UPDATE items SET unit_cost=?, updated_at=datetime('now') WHERE id=?",
+                             (round(weighted_cost, 2), item_id))
+            else:
+                # Setting cost directly: first-time cost, zero-qty restock, or removal
+                conn.execute("UPDATE items SET unit_cost=?, updated_at=datetime('now') WHERE id=?",
+                             (new_unit_cost, item_id))
+        row_after = conn.execute("SELECT qty, unit_cost FROM items WHERE id=?", (item_id,)).fetchone()
         qty_after = float(row_after["qty"]) if row_after else 0.0
-    return qty_before, qty_after
+        cost_after = float(row_after["unit_cost"]) if row_after else 0.0
+        # Log cost change if cost actually changed
+        if cost_after != cost_before:
+            conn.execute(
+                "INSERT INTO cost_history (item_id, cost_before, cost_after, qty_delta, reason, changed_by) VALUES (?,?,?,?,?,?)",
+                (item_id, cost_before, cost_after, delta, reason, changed_by))
+    return qty_before, qty_after, cost_before, cost_after
 
 def delete_item(id):
     with get_conn() as conn:

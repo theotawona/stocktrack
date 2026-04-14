@@ -210,6 +210,7 @@ def generate_movement_slip(movement: dict, company_name: str = "StockTrack") -> 
         slip_number, movement_date, recorded_by, property_name,
         reason, notes (optional),
         items: list of {name, storeroom, qty_before, change, qty_after, uom}
+        invoices: optional list of {filename} — referenced on the printed slip
     """
     items = movement.get("items", [])
     rows = ""
@@ -232,6 +233,17 @@ def generate_movement_slip(movement: dict, company_name: str = "StockTrack") -> 
         f"<div class='notes-text'>{movement.get('notes', '')}</div></div>"
         if movement.get('notes') else ""
     )
+
+    invoices = movement.get("invoices", [])
+    if invoices:
+        inv_list = "".join(f"<li>{inv['filename']}</li>" for inv in invoices)
+        invoice_block = (
+            f"<div class='notes-box' style='border-left-color:#185FA5;background:#f0f5ff;'>"
+            f"<div class='notes-label' style='color:#185FA5;'>Supporting Invoice(s)</div>"
+            f"<ul style='margin:4px 0 0 18px;color:#1a1a2e;'>{inv_list}</ul></div>"
+        )
+    else:
+        invoice_block = ""
 
     html = f"""<!DOCTYPE html>
 <html lang="en">
@@ -328,6 +340,7 @@ def generate_movement_slip(movement: dict, company_name: str = "StockTrack") -> 
   </thead>
   <tbody>{rows}</tbody>
 </table>
+{invoice_block}
 <div class="signatures">
   <div class="sig-block">
     <div class="sig-label">Recorded by</div>

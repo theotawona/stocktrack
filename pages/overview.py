@@ -23,6 +23,7 @@ def render_overview(username, sel_prop_id, sel_room_id):
     low_count    = len(items_df[items_df["status"] == "Low"])
     out_count    = len(items_df[items_df["status"] == "Out of stock"])
     total_value  = items_df["stock_value"].sum() if not items_df.empty else 0
+    no_cost_count = len(items_df[items_df["unit_cost"] <= 0]) if not items_df.empty else 0
 
     issued_30d = 0
     if not issuances_df.empty:
@@ -37,6 +38,7 @@ def render_overview(username, sel_prop_id, sel_room_id):
         ("In stock",     ok_count,     "", "ok"),
         ("Low stock",    low_count,    "", "warn"),
         ("Out of stock", out_count,    "", "danger"),
+        ("No cost set",  no_cost_count, "", "warn" if no_cost_count else ""),
         ("Stock value",  ui.fmt_currency(total_value), f"{int(issued_30d)} units issued (30d)", "info"),
     ])
 
