@@ -18,8 +18,8 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Configuration
-DB_PATH = Path(__file__).parent / "stock_tracker.db"
-BACKUP_DIR = Path(__file__).parent / "data" / "backups"
+DB_PATH = Path(os.environ.get("DB_PATH", Path(__file__).parent / "stock_tracker.db"))
+BACKUP_DIR = Path(os.environ.get("BACKUP_DIR", Path(__file__).parent / "data" / "backups"))
 BACKUP_DIR.mkdir(parents=True, exist_ok=True)
 
 # Optional: Configure for cloud backup (DigitalOcean Spaces, AWS S3, etc.)

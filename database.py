@@ -107,11 +107,12 @@ def get_cost_history_for_item(item_id):
         return pd.read_sql(q, conn, params=[item_id])
 
 import sqlite3
+import os
 import pandas as pd
 from datetime import datetime
 from pathlib import Path
 
-DB_PATH = Path(__file__).parent / "stock_tracker.db"
+DB_PATH = Path(os.environ.get("DB_PATH", Path(__file__).parent / "stock_tracker.db"))
 
 def get_conn():
     conn = sqlite3.connect(DB_PATH)
@@ -283,7 +284,8 @@ def init_db():
         # Older installs created requisition_lines.item_id as NOT NULL.
         # Mixed-basket requisitions store unlisted items with item_id = NULL.
         _ensure_requisition_lines_item_nullable(conn)
-        _seed_demo_data(conn)
+        if os.environ.get("SEED_DEMO", "false").lower() == "true":
+            _seed_demo_data(conn)
 
 
 def _ensure_requisition_lines_item_nullable(conn):

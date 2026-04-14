@@ -1,6 +1,7 @@
 """
 Authentication and authorisation for StockTrack.
 """
+import os
 import yaml
 from pathlib import Path
 from yaml.loader import SafeLoader
@@ -45,18 +46,31 @@ def _hash_passwords(passwords: list) -> list:
 
 
 def _default_config() -> dict:
-    hashed = _hash_passwords(["admin123", "manager123", "staff123"])
+    import secrets as _secrets
+    hashed = _hash_passwords(["admin123", "dev@ST2026!"])
+    cookie_key = os.environ.get("COOKIE_KEY", _secrets.token_hex(32))
     return {
         "credentials": {
             "usernames": {
-                "admin":   {"name": "Administrator",    "email": "admin@stocktrack.co.za",   "password": hashed[0], "role": "admin"},
-                "manager": {"name": "Property Manager", "email": "manager@stocktrack.co.za", "password": hashed[1], "role": "manager"},
-                "staff":   {"name": "Storeroom Staff",  "email": "staff@stocktrack.co.za",   "password": hashed[2], "role": "staff"},
+                "admin": {
+                    "name": "Administrator",
+                    "email": "admin@stocktrack.co.za",
+                    "password": hashed[0],
+                    "role": "admin",
+                    "property_id": None,
+                },
+                "dev": {
+                    "name": "Developer Support",
+                    "email": "dev@cloudapps.co.za",
+                    "password": hashed[1],
+                    "role": "admin",
+                    "property_id": None,
+                },
             }
         },
         "cookie": {
             "name": "stocktrack_auth",
-            "key": "CHANGE_ME_IN_PRODUCTION_USE_A_LONG_RANDOM_STRING",
+            "key": cookie_key,
             "expiry_days": 7,
         },
         "preauthorized": {"emails": []},

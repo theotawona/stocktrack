@@ -1,4 +1,4 @@
-# 🚀 Production Deployment Checklist
+# Production Deployment Checklist
 
 Use this checklist to track your deployment progress.
 
@@ -7,82 +7,89 @@ Use this checklist to track your deployment progress.
 - [ ] **Review DEPLOYMENT_GUIDE.md** thoroughly
 - [ ] **Test the app locally:**
   ```bash
-  docker build -t stocktrack .
-  docker run -p 8501:8501 stocktrack
+  docker compose up --build
   # Visit http://localhost:8501 and test all features
   ```
-- [ ] **Update app.yaml with:**
-  - [ ] Your GitHub username in the `repo` field
-  - [ ] Your custom domain in the `domain` field
 - [ ] **Commit all deployment files to GitHub:**
   ```bash
-  git add Dockerfile .dockerignore app.yaml backup_database.py DEPLOYMENT_GUIDE.md
+  git add Dockerfile .dockerignore docker-compose.yml backup_database.py
   git commit -m "Add production deployment configuration"
   git push
   ```
 
 ## Deployment (Follow These Steps)
 
-### Account Setup
-- [ ] Create DigitalOcean account (free trial available)
+### Account & Droplet Setup
+- [ ] Create DigitalOcean account
 - [ ] Add payment method
-- [ ] Generate Personal Access Token
-- [ ] Connect GitHub to DigitalOcean
+- [ ] Create SSH key (if you don't have one)
+- [ ] Create Droplet: Ubuntu 24.04 LTS, $6/month (1 vCPU, 1 GB RAM)
+- [ ] Note the Droplet IP address: `_______________`
+
+### Server Setup (SSH into Droplet)
+- [ ] SSH in: `ssh root@YOUR_IP`
+- [ ] Install Docker: `curl -fsSL https://get.docker.com | sh`
+- [ ] Install Docker Compose: `apt install -y docker-compose-plugin`
+- [ ] Install Nginx: `apt install -y nginx certbot python3-certbot-nginx`
+- [ ] Configure firewall: `ufw allow OpenSSH; ufw allow 'Nginx Full'; ufw enable`
+
+### Deploy StockTrack
+- [ ] Clone repo: `cd /opt && git clone https://github.com/theotawona/stocktrack.git`
+- [ ] Build & start: `cd stocktrack && docker compose up -d --build`
+- [ ] Verify running: `docker compose ps` and `curl http://localhost:8501/_stcore/health`
+
+### Nginx & SSL
+- [ ] Create Nginx config: `/etc/nginx/sites-available/stocktrack`
+- [ ] Enable site and remove default config
+- [ ] Test Nginx: `nginx -t && systemctl reload nginx`
+- [ ] Verify app loads at `http://YOUR_DROPLET_IP`
+- [ ] (After domain setup) Get SSL: `certbot --nginx -d YOUR_DOMAIN`
 
 ### Domain Configuration
-- [ ] Purchase/prepare custom domain (if using one)
-- [ ] Add domain to DigitalOcean Networking
-- [ ] Update domain registrar's nameservers (if needed)
-- [ ] OR point A record to DigitalOcean's IP
+- [ ] Add A record at your domain registrar pointing to Droplet IP
+- [ ] Wait for DNS propagation (15 min to 48 hours)
+- [ ] Update Nginx `server_name` with your domain
+- [ ] Run Certbot for HTTPS
 
-### Deploy App
-- [ ] Create new App in DigitalOcean
-- [ ] Select GitHub as source
-- [ ] Choose `stocktrack` repo and `main` branch
-- [ ] Review container configuration (port 8501)
-- [ ] Set environment variables
-- [ ] Deploy (wait 5-10 minutes)
+### Backups
+- [ ] Create backup script: `/opt/backup-stocktrack.sh`
+- [ ] Schedule daily cron job
+- [ ] Test backup works: `/opt/backup-stocktrack.sh`
+- [ ] (Optional) Enable DigitalOcean Droplet Backups ($1.20/month)
 
 ### Post-Deployment
-- [ ] Test app at temporary DigitalOcean URL
-- [ ] Verify login works
-- [ ] Test core features (stock, requisitions)
-- [ ] Check database operations
-- [ ] Add custom domain to app
-- [ ] Wait for DNS propagation (15-48 hours)
-- [ ] Test at custom domain with HTTPS
+- [ ] Test login with all user accounts
+- [ ] Test stock management features
+- [ ] Test requisitions and approvals
+- [ ] Test invoice uploads
+- [ ] Create deploy script: `/opt/stocktrack/deploy.sh`
+- [ ] Verify app loads over HTTPS with your domain
 
 ## Ongoing Maintenance
 
 ### Weekly
-- [ ] Check app logs for errors: `doctl apps logs <app-id>`
-- [ ] Verify backups are created
+- [ ] Check logs: `docker compose -f /opt/stocktrack/docker-compose.yml logs --tail 50`
+- [ ] Verify backups exist: `ls -la /opt/stocktrack-backups/`
 - [ ] Monitor DigitalOcean billing
 
 ### Monthly
-- [ ] Review app performance metrics
-- [ ] Check for Streamlit updates
-- [ ] Update dependencies if needed
+- [ ] Check disk usage: `df -h`
+- [ ] Check for Streamlit/dependency updates
 - [ ] Test a manual restore of backup
+- [ ] Review server resources: `free -h`
 
 ### Quarterly
-- [ ] Review security settings
-- [ ] Check SSL certificate validity
-- [ ] Audit user access logs
-- [ ] Plan any infrastructure upgrades
-
-## Backup Strategy (Choose One)
-
-- [ ] **Option A (Recommended):** Use GitHub Actions + repository (see DEPLOYMENT_GUIDE.md)
-- [ ] **Option B:** Manual backups to DigitalOcean Spaces
-- [ ] **Option C:** Regular manual downloads
+- [ ] Update server packages: `apt update && apt upgrade -y`
+- [ ] Verify SSL certificate auto-renewal: `certbot renew --dry-run`
+- [ ] Audit user access
+- [ ] Clean old Docker images: `docker system prune`
 
 ## Troubleshooting Reference
 
 If you encounter issues:
 1. Check [Troubleshooting section in DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md#troubleshooting)
-2. View logs: DigitalOcean Dashboard → Apps → Your App → Logs
-3. Test locally: `docker build` and `docker run`
+2. View logs: `docker compose logs -f`
+3. Test locally: `docker compose up --build`
 
 ---
 
@@ -91,23 +98,24 @@ If you encounter issues:
 Once deployed, save these for future reference:
 
 ```
-App ID: _________________
-GitHub Webhook URL: _________________
+Droplet IP: _________________
+SSH Key Name: _________________
 Custom Domain: _________________
-DigitalOcean SSH Key Name: _________________
-App URL (temp): _________________
-App URL (custom): _________________
+App URL (final): _________________
+Deploy Script: /opt/stocktrack/deploy.sh
+Backup Script: /opt/backup-stocktrack.sh
+Backup Location: /opt/stocktrack-backups/
 ```
 
 ## Cost Tracker
 
 | When | Service | Cost | Notes |
 |------|---------|------|-------|
-| Monthly | App Platform (basic-xs) | $12 | 0.25 vCPU, 512MB RAM |
-| Yearly (or one-time) | Custom Domain | $10-15 | From registrar |
-| Monthly (if added) | Cloud Backups (Spaces) | $5+ | Optional |
+| Monthly | Droplet (1 vCPU, 1 GB) | $6 | 25 GB SSD, persistent disk |
+| Monthly | Droplet Backups (optional) | $1.20 | Weekly full snapshots |
+| Yearly | Custom Domain | $10-15 | From registrar |
 
-**Expected Monthly Cost: $12-14**
+**Expected Monthly Cost: $6-8**
 
 ---
 
@@ -115,10 +123,10 @@ App URL (custom): _________________
 
 - **Stuck?** Read DEPLOYMENT_GUIDE.md → Troubleshooting
 - **Need help?** DigitalOcean support: https://www.digitalocean.com/support
-- **Documentation:** https://docs.digitalocean.com/products/app-platform/
+- **Documentation:** https://docs.digitalocean.com/products/droplets/
 
 ---
 
 **Status:** Ready for deployment ✅
-**Last Updated:** 2026-04-13
+**Last Updated:** 2026-04-14
 **Next Action:** Follow Step 1 in DEPLOYMENT_GUIDE.md

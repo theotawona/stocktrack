@@ -22,6 +22,13 @@ COPY . .
 # Create data directory for persistent storage
 RUN mkdir -p /app/data
 
+# Set DB_PATH so the app writes to the persistent volume
+ENV DB_PATH=/app/data/stock_tracker.db
+
+# If a local DB exists, copy it into the data dir as a seed
+# (only used on first deploy; volume mount will override)
+RUN if [ -f /app/stock_tracker.db ]; then cp /app/stock_tracker.db /app/data/stock_tracker.db; fi
+
 # Expose Streamlit port
 EXPOSE 8501
 

@@ -1,0 +1,31 @@
+# StockTrack User Configuration
+# Copy this file to users.yaml and update passwords before deploying.
+# If users.yaml is missing, the app creates one automatically with default passwords.
+#
+# Default accounts (created automatically):
+#   admin / admin123     — Client administrator
+#   dev   / dev@ST2026!  — Developer support access
+#
+# IMPORTANT: Change both passwords on first login via the Users page.
+#
+# To add more users, use the admin Users page in the app, or add entries below.
+# Passwords must be bcrypt-hashed. The app handles hashing when adding users via the UI.
+
+cookie:
+  expiry_days: 7
+  key: REPLACE_WITH_A_LONG_RANDOM_STRING
+  name: stocktrack_auth
+credentials:
+  usernames:
+    admin:
+      email: admin@clientdomain.co.za
+      name: Administrator
+      password: BCRYPT_HASHED_PASSWORD_HERE
+      property_id: null
+      role: admin
+    dev:
+      email: dev@cloudapps.co.za
+      name: Developer Support
+      password: BCRYPT_HASHED_PASSWORD_HERE
+      property_id: null
+      role: admin

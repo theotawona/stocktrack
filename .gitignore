@@ -8,12 +8,15 @@ __pycache__/
 dist/
 build/
 
-# Database (ephemeral on Streamlit Cloud — regenerated from seed data)
+# Database
 *.db
 *.db-shm
 *.db-wal
 
-# Logs (ephemeral — not needed in repo)
+# User credentials (per-deployment, never commit real passwords)
+users.yaml
+
+# Logs
 logs/
 
 # Streamlit secrets (set via Streamlit Cloud dashboard, never commit)

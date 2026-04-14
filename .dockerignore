@@ -28,6 +28,10 @@ ENV/
 env.bak/
 venv.bak/
 .vscode/
+users.yaml
+*.db
+*.db-shm
+*.db-wal
 .idea/
 *.md
 logs/*.log

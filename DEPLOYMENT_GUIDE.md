@@ -1,8 +1,8 @@
-# 🚀 StockTrack Production Deployment Guide
+# StockTrack Production Deployment Guide
 
-**Deployment Target:** DigitalOcean App Platform  
-**Tech Stack:** Docker + Streamlit + SQLite  
-**Estimated Cost:** $12/month (basic tier) + custom domain  
+**Deployment Target:** DigitalOcean Droplet  
+**Tech Stack:** Docker + Docker Compose + Nginx + Streamlit + SQLite  
+**Estimated Cost:** $6/month (Droplet) + custom domain  
 **Estimated Setup Time:** 30-45 minutes
 
 ---
@@ -10,329 +10,489 @@
 ## Table of Contents
 1. [Prerequisites](#prerequisites)
 2. [Step 1: Prepare Your GitHub Repository](#step-1-prepare-your-github-repository)
-3. [Step 2: Set Up DigitalOcean Account](#step-2-set-up-digitalocean-account)
-4. [Step 3: Configure Custom Domain](#step-3-configure-custom-domain)
-5. [Step 4: Deploy to DigitalOcean](#step-4-deploy-to-digitalocean)
-6. [Step 5: Set Up Automatic Backups](#step-5-set-up-automatic-backups)
-7. [Step 6: Monitor & Maintain](#step-6-monitor--maintain)
-8. [Troubleshooting](#troubleshooting)
+3. [Step 2: Create a DigitalOcean Droplet](#step-2-create-a-digitalocean-droplet)
+4. [Step 3: Install Docker on the Droplet](#step-3-install-docker-on-the-droplet)
+5. [Step 4: Deploy StockTrack](#step-4-deploy-stocktrack)
+6. [Step 5: Set Up Nginx & SSL](#step-5-set-up-nginx--ssl)
+7. [Step 6: Configure Custom Domain](#step-6-configure-custom-domain)
+8. [Step 7: Set Up Automatic Backups](#step-7-set-up-automatic-backups)
+9. [Step 8: Set Up Auto-Deploy from GitHub](#step-8-set-up-auto-deploy-from-github)
+10. [Updating the App](#updating-the-app)
+11. [Monitoring & Maintenance](#monitoring--maintenance)
+12. [Troubleshooting](#troubleshooting)
 
 ---
 
 ## Prerequisites
 
-- ✅ GitHub account (free)
-- ✅ DigitalOcean account ($12+ balance)
+- ✅ GitHub account with your repo pushed (you already have `theotawona/stocktrack`)
+- ✅ DigitalOcean account (sign up at [digitalocean.com](https://digitalocean.com))
 - ✅ Custom domain (optional but recommended)
 - ✅ These files in your repo:
-  - `Dockerfile` ✓ Created
-  - `.dockerignore` ✓ Created
-  - `app.yaml` ✓ Created
-  - `backup_database.py` ✓ Created
+  - `Dockerfile` ✓
+  - `.dockerignore` ✓
+  - `docker-compose.yml` ✓
+  - `backup_database.py` ✓
+
+---
+
+## Why a Droplet Instead of App Platform?
+
+StockTrack uses **SQLite** — a file-based database that lives on disk. App Platform runs stateless containers that lose their filesystem on every deploy. A Droplet gives you a **real persistent server** where your database safely stays on disk across deployments and reboots.
+
+| Feature | Droplet | App Platform |
+|---------|---------|-------------|
+| Cost | **$6/month** | $12/month |
+| SQLite persistence | **Native — just works** | Requires workarounds |
+| Full server access | **Yes (SSH)** | No |
+| Auto-deploy from GitHub | Webhook script | Built-in |
+| SSL (HTTPS) | Certbot (free) | Built-in |
+| Backups | Cron + volume snapshot | Manual |
 
 ---
 
 ## Step 1: Prepare Your GitHub Repository
 
-### 1.1 Create a GitHub Repository
+Your repo is already on GitHub at `theotawona/stocktrack`. Make sure the latest code is pushed:
 
 ```bash
-# If not already a git repo:
-cd StockTrack
-git init
 git add .
-git commit -m "Initial commit: StockTrack MVP"
-git branch -M main
-git remote add origin https://github.com/YOUR_USERNAME/stocktrack.git
-git push -u origin main
-```
-
-### 1.2 Update `app.yaml` (IMPORTANT)
-
-Edit `app.yaml` and replace:
-```yaml
-# Line 4: Replace with your GitHub repo
-repo: YOUR_GITHUB_USERNAME/stocktrack
-
-# Line 34: Replace with your custom domain
-domain: your-domain.com  # e.g., stocktrack.company.com
-```
-
-### 1.3 Commit the deployment files
-
-```bash
-git add Dockerfile .dockerignore app.yaml backup_database.py
-git commit -m "Add production deployment configuration"
-git push
+git commit -m "Deployment configuration"
+git push origin main
 ```
 
 ---
 
-## Step 2: Set Up DigitalOcean Account
+## Step 2: Create a DigitalOcean Droplet
 
-### 2.1 Create Account & Add Payment Method
-1. Go to [digitalocean.com](https://digitalocean.com)
-2. Sign up for a free account
-3. Add a payment method (credit card)
-4. Create a DigitalOcean Personal Access Token:
-   - Go to Settings → API → Tokens/Keys
-   - Click "Generate New Token"
-   - Name it "stocktrack-deployment"
-   - Select "Read" scope for now
-   - Copy the token (you'll need it)
+### 2.1 Create Account & Add Payment
+1. Go to [digitalocean.com](https://digitalocean.com) and sign up
+2. Add a payment method (credit card or PayPal)
 
-### 2.2 Create a GitHub Connection (for auto-deploy)
-1. In DigitalOcean, go to Settings → GitHub
-2. Click "Connect to GitHub"
-3. Authorize DigitalOcean to access your repositories
-4. Select your `stocktrack` repository
+### 2.2 Create the Droplet
+1. Click **Create → Droplets**
+2. Choose these settings:
+   - **Region:** Choose the closest to your users (e.g., London, Frankfurt, or Johannesburg-closest)
+   - **Image:** **Ubuntu 24.04 LTS**
+   - **Size:** **Basic → Regular → $6/month** (1 vCPU, 1 GB RAM, 25 GB SSD)
+   - **Authentication:** Choose **SSH Key** (recommended) or Password
+   - **Hostname:** `stocktrack`
+3. Click **Create Droplet**
+4. Note the **IP address** once it's ready (e.g., `164.92.xxx.xxx`)
+
+### 2.3 Set Up SSH Key (if you chose SSH)
+
+If you don't have an SSH key yet:
+```powershell
+# On your Windows machine (PowerShell):
+ssh-keygen -t ed25519 -C "your-email@example.com"
+# Press Enter for defaults
+# Copy your public key:
+Get-Content ~/.ssh/id_ed25519.pub
+```
+Paste the public key into the DigitalOcean SSH key field when creating the Droplet.
 
 ---
 
-## Step 3: Configure Custom Domain
+## Step 3: Install Docker on the Droplet
 
-### 3.1 Set Up Your Domain
+### 3.1 SSH into Your Droplet
 
-**Option A: Using a Domain You Own**
-1. Go to your domain registrar (GoDaddy, Namecheap, etc.)
-2. Find DNS settings
-3. Create an `A` record:
-   - **Name:** `stocktrack` (or your subdomain)
-   - **Type:** `A`
-   - **Value:** `(You'll get this from DigitalOcean after deployment)`
+```bash
+ssh root@YOUR_DROPLET_IP
+```
 
-**Option B: Use DigitalOcean's Free SSL**
-- DigitalOcean provides free SSL certificates
-- Point your domain's nameservers to DigitalOcean's nameservers
-- Instructions: DigitalOcean Dashboard → Networking → Domains
+### 3.2 Install Docker & Docker Compose
 
-### 3.2 Add Domain to DigitalOcean
-1. DigitalOcean Dashboard → Networking → Domains
-2. Click "Add Domain"
-3. Enter your domain name
-4. DigitalOcean will provide nameservers
-5. Update your domain registrar's nameservers (15-48 hours to propagate)
+Run these commands on the Droplet:
+
+```bash
+# Update system packages
+apt update && apt upgrade -y
+
+# Install Docker
+curl -fsSL https://get.docker.com | sh
+
+# Install Docker Compose plugin
+apt install -y docker-compose-plugin
+
+# Verify installation
+docker --version
+docker compose version
+```
+
+### 3.3 Install Nginx & Certbot (for SSL)
+
+```bash
+apt install -y nginx certbot python3-certbot-nginx
+```
+
+### 3.4 Set Up Firewall
+
+```bash
+ufw allow OpenSSH
+ufw allow 'Nginx Full'
+ufw enable
+```
+
+> **Note:** We do NOT open port 8501 publicly. Nginx will proxy traffic to it.
 
 ---
 
-## Step 4: Deploy to DigitalOcean
+## Step 4: Deploy StockTrack
 
-### 4.1 Deploy Using App Platform
-
-**Method 1: Using Web Console (Easiest)**
-
-1. Go to DigitalOcean Dashboard → Apps
-2. Click "Create App"
-3. Choose "GitHub" source
-4. Select your GitHub account
-5. Find and select `stocktrack` repository
-6. Choose `main` branch
-7. DigitalOcean detects your `Dockerfile` automatically
-8. Review configuration:
-   - **Instance Size:** "Basic" ($12/month) ✅
-   - **Port:** 8501 ✅
-   - **Health Check:** `/_stcore/health` ✅
-9. Click "Next"
-10. Set environment variables:
-    ```
-    STREAMLIT_SERVER_HEADLESS=true
-    STREAMLIT_SERVER_PORT=8501
-    STREAMLIT_LOGGER_LEVEL=info
-    ```
-11. Click "Next" → Review → "Create Resources"
-12. Wait for deployment (5-10 minutes)
-
-**Method 2: Using CLI (If preferred)**
+### 4.1 Clone Your Repository
 
 ```bash
-# Install doctl (DigitalOcean CLI)
-# https://docs.digitalocean.com/reference/doctl/how-to/install/
-
-# Authorize with DigitalOcean
-doctl auth init
-
-# Create app from your app.yaml
-doctl apps create --spec app.yaml
-
-# Get app status
-doctl apps list
-doctl apps get <app-id>
+cd /opt
+git clone https://github.com/theotawona/stocktrack.git
+cd stocktrack
 ```
 
-### 4.2 Verify Deployment
+### 4.2 Build and Start the App
 
-1. DigitalOcean will assign a temporary URL (e.g., `stocktrack-xxxxx.ondigitalocean.app`)
-2. Test the app in your browser
-3. Test login with your credentials from `users.yaml`
-4. Verify database operations (create stock, requisitions, etc.)
+```bash
+docker compose up -d --build
+```
 
-### 4.3 Connect Custom Domain
+This will:
+- Build the Docker image from your Dockerfile
+- Start StockTrack on port 8501
+- Create a persistent Docker volume for your SQLite database at `/app/data/`
 
-1. Go to App → Settings → Domains
-2. Add your custom domain
-3. DigitalOcean provides DNS records to add
-4. Update your domain registrar's DNS
-5. SSL certificate is automatic (Let's Encrypt)
-6. Wait 5-30 minutes for DNS propagation
+### 4.3 Verify It's Running
+
+```bash
+docker compose ps
+# Should show stocktrack running, healthy
+
+curl http://localhost:8501/_stcore/health
+# Should return "ok"
+```
 
 ---
 
-## Step 5: Set Up Automatic Backups
+## Step 5: Set Up Nginx & SSL
 
-### 5.1 Option A: DigitalOcean App Platform Persistent Storage (Recommended)
+### 5.1 Create Nginx Configuration
 
-The `app.yaml` already includes volume configuration. Your SQLite database is stored at `/app/data/`.
-
-**To back up manually:**
 ```bash
-# Download from running app
-doctl apps get <app-id> --format json | jq .
-# Then use SCP or download from dashboard
+nano /etc/nginx/sites-available/stocktrack
 ```
 
-### 5.2 Option B: Setup Cron Backup Job
+Paste this configuration (replace `YOUR_DOMAIN` with your actual domain, or your Droplet IP for now):
 
-Create a GitHub Actions workflow for automatic backups:
+```nginx
+server {
+    listen 80;
+    server_name YOUR_DOMAIN;
 
-**File:** `.github/workflows/backup.yml`
+    location / {
+        proxy_pass http://localhost:8501;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 86400;
 
-```yaml
-name: Database Backup
-
-on:
-  schedule:
-    - cron: '0 2 * * *'  # Run daily at 2 AM UTC
-  workflow_dispatch:
-
-jobs:
-  backup:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-      
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.11'
-      
-      - name: Run backup
-        env:
-          DB_PATH: stock_tracker.db
-        run: |
-          python backup_database.py
-      
-      - name: Commit and push
-        run: |
-          git config --local user.email "action@github.com"
-          git config --local user.name "GitHub Action"
-          git add data/backups/
-          git commit -m "Daily backup: $(date)" || true
-          git push
+        # Required for Streamlit WebSocket connections
+        proxy_buffering off;
+    }
+}
 ```
 
-### 5.3 Option C: Cloud Storage Backup (Advanced)
+### 5.2 Enable the Site
 
-To back up to DigitalOcean Spaces ($5/month):
+```bash
+ln -s /etc/nginx/sites-available/stocktrack /etc/nginx/sites-enabled/
+rm /etc/nginx/sites-enabled/default
+nginx -t        # Test config — should say "ok"
+systemctl reload nginx
+```
 
-1. Create Spaces bucket in DigitalOcean
-2. Generate Access Key
-3. Add to `app.yaml`:
-   ```yaml
-   envs:
-   - key: ENABLE_CLOUD_BACKUP
-     value: 'true'
-   - key: SPACES_KEY
-     value: ${SPACES_KEY}
-   - key: SPACES_SECRET
-     value: ${SPACES_SECRET}  # Store as secret
-   - key: SPACES_BUCKET
-     value: stocktrack-backups
-   ```
-4. In DigitalOcean: Apps → Settings → Encrypt these as secrets
+### 5.3 Test with HTTP
+
+Visit `http://YOUR_DROPLET_IP` in your browser — StockTrack should load.
+
+### 5.4 Add SSL Certificate (after domain is pointing to your IP)
+
+```bash
+certbot --nginx -d YOUR_DOMAIN
+```
+
+Certbot will:
+- Get a free Let's Encrypt SSL certificate
+- Automatically configure Nginx for HTTPS
+- Set up auto-renewal
+
+**Test auto-renewal:**
+```bash
+certbot renew --dry-run
+```
 
 ---
 
-## Step 6: Monitor & Maintain
+## Step 6: Configure Custom Domain
 
-### 6.1 View Logs
+### 6.1 Point Your Domain to the Droplet
+
+Go to your domain registrar (GoDaddy, Namecheap, etc.) and create:
+
+| Record Type | Name | Value |
+|-------------|------|-------|
+| **A** | `@` or `stocktrack` | `YOUR_DROPLET_IP` |
+
+Example: If your domain is `stocktrack.globvest.co.za`:
+- **A record:** `stocktrack` → `164.92.xxx.xxx`
+
+### 6.2 Wait for DNS Propagation
+
+DNS changes take **15 minutes to 48 hours**. You can check progress:
 ```bash
-# In DigitalOcean Dashboard: Apps → Your App → Logs
-# Or via CLI:
-doctl apps logs <app-id>
+nslookup stocktrack.yourdomain.com
 ```
 
-### 6.2 Update Your App
+### 6.3 Update Nginx & Get SSL
 
-When you push changes to GitHub:
-1. DigitalOcean watches your `main` branch
-2. Automatically rebuilds Docker image
-3. Deploys new version (zero-downtime rolling update)
-4. Takes ~5 minutes per update
+Once the domain resolves to your IP:
 
-### 6.3 Manual Restart
 ```bash
-doctl apps restart <app-id>
+# Update the server_name in Nginx config
+nano /etc/nginx/sites-available/stocktrack
+# Change: server_name YOUR_DOMAIN;  →  server_name stocktrack.yourdomain.com;
+systemctl reload nginx
+
+# Get SSL certificate
+certbot --nginx -d stocktrack.yourdomain.com
 ```
 
-### 6.4 Scale Up (If Needed)
-1. DigitalOcean Dashboard → Apps → Your App → Settings
-2. Change instance size (basic-xs → basic-s costs more)
-3. For 6 users, basic-xs should be sufficient
+---
 
-### 6.5 Monitor Usage
-1. Dashboard → Billing → Usage
-2. Check bandwidth, compute hours
-3. Set alerts for spending
+## Step 7: Set Up Automatic Backups
+
+### 7.1 Create a Backup Script on the Droplet
+
+```bash
+mkdir -p /opt/stocktrack-backups
+
+cat > /opt/backup-stocktrack.sh << 'EOF'
+#!/bin/bash
+TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+BACKUP_DIR="/opt/stocktrack-backups"
+VOLUME_PATH=$(docker volume inspect stocktrack_stocktrack-data -f '{{.Mountpoint}}')
+
+# Copy the database from the Docker volume
+cp "$VOLUME_PATH/stock_tracker.db" "$BACKUP_DIR/stock_tracker_$TIMESTAMP.db"
+
+# Keep only last 14 days of backups
+find "$BACKUP_DIR" -name "*.db" -mtime +14 -delete
+
+echo "Backup complete: stock_tracker_$TIMESTAMP.db"
+EOF
+
+chmod +x /opt/backup-stocktrack.sh
+```
+
+### 7.2 Schedule Daily Backups with Cron
+
+```bash
+crontab -e
+```
+
+Add this line (backs up every day at 2 AM):
+```
+0 2 * * * /opt/backup-stocktrack.sh >> /var/log/stocktrack-backup.log 2>&1
+```
+
+### 7.3 Test the Backup
+
+```bash
+/opt/backup-stocktrack.sh
+ls -la /opt/stocktrack-backups/
+```
+
+### 7.4 Optional: Enable DigitalOcean Droplet Backups
+
+For an extra **$1.20/month**, DigitalOcean can snapshot your entire Droplet weekly:
+1. Go to your Droplet → **Backups** tab
+2. Click **Enable Backups**
+
+This gives you full server recovery — recommended for production.
+
+---
+
+## Step 8: Set Up Auto-Deploy from GitHub
+
+When you push code to GitHub, the Droplet can automatically pull and redeploy.
+
+### 8.1 Create a Deploy Script
+
+```bash
+cat > /opt/stocktrack/deploy.sh << 'EOF'
+#!/bin/bash
+cd /opt/stocktrack
+
+# Pull latest code
+git pull origin main
+
+# Rebuild and restart (keeps the database volume intact)
+docker compose up -d --build
+
+echo "Deploy complete: $(date)"
+EOF
+
+chmod +x /opt/stocktrack/deploy.sh
+```
+
+### 8.2 Option A: Manual Deploy (Simplest)
+
+Whenever you push to GitHub, SSH into the Droplet and run:
+```bash
+/opt/stocktrack/deploy.sh
+```
+
+### 8.2 Option B: GitHub Webhook (Automatic)
+
+For automatic deploys, you can set up a lightweight webhook listener. This is optional — manual deploys work fine for a small team.
+
+---
+
+## Updating the App
+
+After pushing changes to GitHub:
+
+```bash
+# SSH into your Droplet
+ssh root@YOUR_DROPLET_IP
+
+# Run the deploy script
+/opt/stocktrack/deploy.sh
+```
+
+Or in one command from your local machine:
+```bash
+ssh root@YOUR_DROPLET_IP "/opt/stocktrack/deploy.sh"
+```
+
+Your database is **never affected** by redeployments — it lives in a Docker volume separate from the app code.
+
+---
+
+## Monitoring & Maintenance
+
+### View App Logs
+```bash
+# Live logs
+docker compose -f /opt/stocktrack/docker-compose.yml logs -f
+
+# Last 100 lines
+docker compose -f /opt/stocktrack/docker-compose.yml logs --tail 100
+```
+
+### Check App Status
+```bash
+docker compose -f /opt/stocktrack/docker-compose.yml ps
+```
+
+### Restart the App
+```bash
+docker compose -f /opt/stocktrack/docker-compose.yml restart
+```
+
+### Check Disk Usage
+```bash
+df -h           # Overall disk usage
+du -sh /opt/stocktrack-backups/  # Backup size
+docker system df  # Docker disk usage
+```
+
+### Check Server Resources
+```bash
+htop            # CPU & memory (install: apt install htop)
+free -h         # Memory usage
+```
 
 ---
 
 ## Troubleshooting
 
-### App Won't Deploy
+### App Won't Start
+```bash
+docker compose logs stocktrack
 ```
-Error: Failed to build Docker image
-```
-**Solution:**
-- Check `docker logs` locally: `docker build -t stocktrack .`
-- Ensure all dependencies are in `requirements.txt`
-- Check `Dockerfile` references correct Python version
+Common causes:
+- Port 8501 already in use: `lsof -i :8501`
+- Build error: Check `requirements.txt` is correct
+- Fix and rebuild: `docker compose up -d --build`
 
-### Database Errors After Deployment
+### "502 Bad Gateway" in Browser
+Nginx is running but can't reach the app:
+```bash
+# Check if Docker container is running
+docker compose ps
+
+# Check if app is healthy
+curl http://localhost:8501/_stcore/health
+
+# Restart if needed
+docker compose restart
 ```
-Error: database is locked / unable to open database file
+
+### Database Errors
 ```
-**Solution:**
-- SQLite doesn't support network access
-- Ensure database path is `/app/data/stock_tracker.db`
-- Database is persisted via volume mount
+Error: database is locked
+```
+SQLite allows one writer at a time. For a small team this is rarely an issue. If it persists:
+```bash
+# Check if multiple containers are running
+docker compose ps
+# Should show exactly 1 container
+```
+
+### SSL Certificate Issues
+```bash
+# Check certificate status
+certbot certificates
+
+# Force renewal
+certbot renew --force-renewal
+
+# Check Nginx config
+nginx -t
+```
 
 ### Custom Domain Not Working
-```
-Domain name mismatch / SSL certificate error
-```
-**Solution:**
-- DNS propagation takes 15-48 hours
-- Check DNS records: `nslookup your-domain.com`
-- Use CloudFlare DNS checker: cloudflare.com/dns-checker
-- Ensure A record points to DigitalOcean's IP
+- Ensure the A record points to your Droplet's IP
+- Check propagation: `nslookup yourdomain.com`
+- DNS changes can take up to 48 hours
+- After DNS resolves, run `certbot --nginx -d yourdomain.com`
 
-### Performance Issues
-```
-App is slow / timeouts
-```
-**Solution for 6 users on basic-xs:**
-- Basic-xs (0.25 vCPU, 512MB) should handle 6 concurrent users
-- Check logs for database locks
-- Consider upgrading to `basic-s` ($18/month) if slow
+### Running Out of Disk Space
+```bash
+# Clean old Docker images
+docker system prune -a
 
-### Backup Not Running
+# Check backup folder size
+du -sh /opt/stocktrack-backups/
 ```
-Backup files not created
+
+### Need to Restore a Backup
+```bash
+# Stop the app
+docker compose -f /opt/stocktrack/docker-compose.yml down
+
+# Find the volume path
+VOLUME_PATH=$(docker volume inspect stocktrack_stocktrack-data -f '{{.Mountpoint}}')
+
+# Copy backup over the current database
+cp /opt/stocktrack-backups/stock_tracker_YYYYMMDD_HHMMSS.db "$VOLUME_PATH/stock_tracker.db"
+
+# Start the app
+docker compose -f /opt/stocktrack/docker-compose.yml up -d
 ```
-**Solution:**
-- Check GitHub Actions logs (if using Actions)
-- Manually test: `python backup_database.py`
-- Verify file permissions on `/app/data/`
 
 ---
 
@@ -340,35 +500,34 @@ Backup files not created
 
 | Component | Price | Notes |
 |-----------|-------|-------|
-| App Platform (basic-xs) | $12/month | 0.25 vCPU, 512MB RAM |
-| Custom Domain | $10-15/year | From registrar (GoDaddy, etc.) |
-| SSL Certificate | Free | Let's Encrypt (automatic) |
-| Backups (local) | Free | Stored in app's volume |
-| Backups (Spaces) | $5+/month | Only if using cloud storage |
-| **Total MVP** | **~$12-14/month** | Custom domain included |
+| Droplet (1 vCPU, 1 GB) | **$6/month** | 25 GB SSD, 1 TB transfer |
+| Droplet backups (optional) | $1.20/month | Weekly full-server snapshots |
+| Custom domain | $10-15/year | From registrar |
+| SSL certificate | Free | Let's Encrypt via Certbot |
+| **Total** | **~$6-8/month** | Half the cost of App Platform |
 
 ---
 
 ## Next Steps After Deployment
 
-1. ✅ Test the app thoroughly in production
-2. ✅ Set up monitoring alerts
-3. ✅ Document any custom configurations
-4. ✅ Train users on production URL
-5. ✅ Update your `users.yaml` if needed
-6. ✅ Plan backup strategy (GitHub Actions recommended for 6 users)
-7. ✅ Set a reminder to review logs weekly
+1. ✅ Test the app thoroughly at your domain
+2. ✅ Test login with all user accounts from `users.yaml`
+3. ✅ Create real storerooms, properties, and stock items
+4. ✅ Enable DigitalOcean Droplet backups ($1.20/month)
+5. ✅ Share the URL with your team
+6. ✅ Change the default passwords in `users.yaml` and redeploy
+7. ✅ Set a reminder to check logs and backups weekly
 
 ---
 
 ## Support & Resources
 
-- **DigitalOcean Docs:** https://docs.digitalocean.com/products/app-platform/
+- **DigitalOcean Droplets:** https://docs.digitalocean.com/products/droplets/
+- **Docker Compose:** https://docs.docker.com/compose/
+- **Nginx:** https://nginx.org/en/docs/
+- **Certbot (SSL):** https://certbot.eff.org/
 - **Streamlit Deployment:** https://docs.streamlit.io/deploy
-- **Docker Help:** https://docs.docker.com/
-- **SQLite Persistent Storage:** https://github.com/streamlit/streamlit/issues/1018
 
 ---
 
-**🎉 Congratulations!** Your StockTrack app is now in production!  
-**Questions?** Check the [Troubleshooting](#troubleshooting) section or refer to DigitalOcean's documentation.
+**Your StockTrack app is now in production on a $6/month server with persistent storage, SSL, and automated backups.**

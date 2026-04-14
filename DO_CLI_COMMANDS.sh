@@ -1,83 +1,120 @@
 #!/usr/bin/env bash
-# StockTrack DigitalOcean CLI Commands
-
-# This file contains useful commands for managing your production deployment
-# Most commands require the `doctl` CLI tool to be installed and authenticated
-
-# ============================================================================
-# INSTALLATION
-# ============================================================================
-
-# Install doctl (DigitalOcean CLI)
-# macOS:
-#   brew install doctl
-# Linux:
-#   cd ~
-#   wget https://github.com/digitalocean/doctl/releases/download/v1.89.0/doctl-1.89.0-linux-amd64.tar.gz
-#   tar xf ~/doctl-1.89.0-linux-amd64.tar.gz
-#   sudo mv ~/doctl /usr/local/bin
-# Windows: Download from https://github.com/digitalocean/doctl/releases
-
-# Authenticate
-# doctl auth init
-
+# StockTrack — Useful Server Commands
+# Run these on your DigitalOcean Droplet via SSH: ssh root@YOUR_DROPLET_IP
 
 # ============================================================================
 # APP MANAGEMENT
 # ============================================================================
 
-# List all apps
-doctl apps list
-
-# Get app details
-doctl apps get APP_ID --format json | jq
-
 # View live logs
-doctl apps logs APP_ID --follow
+docker compose -f /opt/stocktrack/docker-compose.yml logs -f
 
-# View logs from last 2 hours
-doctl apps logs APP_ID --since 2h
+# View last 100 log lines
+docker compose -f /opt/stocktrack/docker-compose.yml logs --tail 100
 
-# Restart app (zero downtime)
-doctl apps restart APP_ID
+# Check app status
+docker compose -f /opt/stocktrack/docker-compose.yml ps
 
-# Deploy latest code (trigger redeploy)
-doctl apps create-deployment APP_ID
+# Restart the app
+docker compose -f /opt/stocktrack/docker-compose.yml restart
 
+# Stop the app
+docker compose -f /opt/stocktrack/docker-compose.yml down
 
-# ============================================================================
-# DOMAIN MANAGEMENT
-# ============================================================================
+# Start the app
+docker compose -f /opt/stocktrack/docker-compose.yml up -d
 
-# List all domains
-doctl compute domain list
-
-# Get domain details
-doctl compute domain get your-domain.com
-
-# Add domain to DigitalOcean
-doctl compute domain create your-domain.com --ip-address xxx.xxx.xxx.xxx
-
-# List DNS records for domain
-doctl compute domain records list your-domain.com
-
-# Create DNS A record
-doctl compute domain records create your-domain.com \
-  --record-type A \
-  --record-name stocktrack \
-  --record-data xxx.xxx.xxx.xxx
+# Rebuild and restart (after code changes)
+cd /opt/stocktrack && git pull origin main && docker compose up -d --build
 
 
 # ============================================================================
-# BACKUPS & DATA
+# DEPLOY LATEST CODE (all-in-one)
 # ============================================================================
 
-# Download database backup from app
-# Note: You may need to use DigitalOcean dashboard for file downloads
-# Or use rsync if you set up SSH access
+# /opt/stocktrack/deploy.sh
+# Or manually:
+cd /opt/stocktrack
+git pull origin main
+docker compose up -d --build
 
-# Manual backup script (runs on your local machine)
-# python backup_database.py
+
+# ============================================================================
+# DATABASE & BACKUPS
+# ============================================================================
+
+# Run backup manually
+/opt/backup-stocktrack.sh
+
+# List backups
+ls -lh /opt/stocktrack-backups/
+
+# Find the Docker volume path
+docker volume inspect stocktrack_stocktrack-data -f '{{.Mountpoint}}'
+
+# Restore a backup (STOP APP FIRST)
+# docker compose -f /opt/stocktrack/docker-compose.yml down
+# VOLUME_PATH=$(docker volume inspect stocktrack_stocktrack-data -f '{{.Mountpoint}}')
+# cp /opt/stocktrack-backups/stock_tracker_YYYYMMDD_HHMMSS.db "$VOLUME_PATH/stock_tracker.db"
+# docker compose -f /opt/stocktrack/docker-compose.yml up -d
+
+
+# ============================================================================
+# NGINX & SSL
+# ============================================================================
+
+# Test Nginx config
+nginx -t
+
+# Reload Nginx
+systemctl reload nginx
+
+# View Nginx error logs
+tail -50 /var/log/nginx/error.log
+
+# Check SSL certificate status
+certbot certificates
+
+# Renew SSL (normally auto, but can force)
+certbot renew
+
+# Test auto-renewal
+certbot renew --dry-run
+
+
+# ============================================================================
+# SERVER HEALTH
+# ============================================================================
+
+# Check disk usage
+df -h
+
+# Check memory usage
+free -h
+
+# Check running processes
+htop
+
+# Check Docker disk usage
+docker system df
+
+# Clean unused Docker images/volumes
+docker system prune -a
+
+
+# ============================================================================
+# DOMAIN MANAGEMENT (via doctl CLI, optional)
+# ============================================================================
+
+# Install doctl: https://docs.digitalocean.com/reference/doctl/how-to/install/
+# doctl auth init
+
+# Add domain
+# doctl compute domain create your-domain.com --ip-address YOUR_DROPLET_IP
+
+# Create A record
+# doctl compute domain records create your-domain.com \
+#   --record-type A --record-name stocktrack --record-data YOUR_DROPLET_IP
 
 
 # ============================================================================
