@@ -85,10 +85,13 @@ def render_users(username):
             c1, c2, c3 = st.columns(3)
             sel_manage  = c1.selectbox("User", other_users)
             new_r       = c2.selectbox("New role", ["staff","manager","admin"])
-            action      = c3.radio("Action", ["Change role","Delete user","Assign property"])
+            action      = c3.radio("Action", ["Change role","Delete user","Assign property","Reset password"])
             assign_property = None
             if action == "Assign property" and property_choices:
                 assign_property = st.selectbox("Property to assign", options=["(None)"] + list(property_choices.keys()), format_func=lambda x: property_choices.get(x, "(None)"))
+            reset_pw = ""
+            if action == "Reset password":
+                reset_pw = st.text_input("New password *", type="password", help="User will be forced to change this on next login.")
             if st.form_submit_button("Apply"):
                 try:
                     if action == "Change role":
@@ -104,6 +107,17 @@ def render_users(username):
                             auth_module.update_user_property(sel_manage, None)
                             logger.info("Property of '%s' cleared by %s", sel_manage, username)
                             st.success(f"Property cleared for {sel_manage}.")
+                    elif action == "Reset password":
+                        errs = []
+                        ok, msg = v.password(reset_pw)
+                        if not ok:
+                            errs.append(msg)
+                        if errs:
+                            ui.show_errors(errs)
+                        else:
+                            auth_module.reset_user_password(sel_manage, reset_pw)
+                            logger.info("Password of '%s' reset by admin %s", sel_manage, username)
+                            st.success(f"Password reset for {sel_manage}. They must change it on next login.")
                     else:
                         auth_module.delete_user(sel_manage)
                         logger.warning("User '%s' deleted by admin %s", sel_manage, username)

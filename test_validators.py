@@ -78,11 +78,23 @@ class TestUsername:
 
 class TestPassword:
     def test_too_short(self):
-        ok, _ = v.password("abc")
+        ok, _ = v.password("Abc1!")
+        assert not ok
+
+    def test_no_uppercase(self):
+        ok, _ = v.password("secure123!")
+        assert not ok
+
+    def test_no_digit(self):
+        ok, _ = v.password("Securepass!")
+        assert not ok
+
+    def test_no_special(self):
+        ok, _ = v.password("Secure123")
         assert not ok
 
     def test_valid(self):
-        ok, _ = v.password("secure123")
+        ok, _ = v.password("Secure123!")
         assert ok
 
     def test_too_long(self):
@@ -217,11 +229,11 @@ class TestValidateRequisitionForm:
 
 class TestValidateUserForm:
     def test_valid(self):
-        errs = v.validate_user_form("sipho_m", "Sipho Mokoena", "secure123", "sipho@co.za")
+        errs = v.validate_user_form("sipho_m", "Sipho Mokoena", "Secure123!", "sipho@co.za")
         assert errs == []
 
     def test_bad_username(self):
-        errs = v.validate_user_form("s m", "Sipho", "secure123", "")
+        errs = v.validate_user_form("s m", "Sipho", "Secure123!", "")
         assert len(errs) > 0
 
     def test_short_password(self):
@@ -229,5 +241,5 @@ class TestValidateUserForm:
         assert len(errs) > 0
 
     def test_bad_email(self):
-        errs = v.validate_user_form("sipho_m", "Sipho", "secure123", "notanemail")
+        errs = v.validate_user_form("sipho_m", "Sipho", "Secure123!", "notanemail")
         assert len(errs) > 0

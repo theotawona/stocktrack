@@ -38,6 +38,41 @@ if auth_status is False:
 if auth_status is None:
     st.stop()
 
+# ── Force password change ─────────────────────────────────────
+if auth_module.must_change_password(username):
+    st.markdown(ui.GLOBAL_CSS, unsafe_allow_html=True)
+    col = st.columns([1, 1.2, 1])[1]
+    with col:
+        st.markdown(
+            "<div style='text-align:center;padding:40px 0 16px'>"
+            "<div style='font-size:36px'>🔑</div>"
+            "<div style='font-size:22px;font-weight:700;margin:8px 0'>Password Change Required</div>"
+            "<div style='font-size:13px;color:#888'>You must set a new password before continuing.</div>"
+            "</div>",
+            unsafe_allow_html=True,
+        )
+        with st.form("force_change_pw"):
+            new_pw = st.text_input("New password", type="password")
+            confirm_pw = st.text_input("Confirm new password", type="password")
+            if st.form_submit_button("Set new password", type="primary"):
+                errs = []
+                ok, msg = v.password(new_pw)
+                if not ok:
+                    errs.append(msg)
+                if new_pw != confirm_pw:
+                    errs.append("Passwords do not match.")
+                if errs:
+                    for e in errs:
+                        st.error(e)
+                else:
+                    try:
+                        auth_module.set_forced_new_password(username, new_pw)
+                        st.success("Password updated. Redirecting...")
+                        st.rerun()
+                    except Exception as exc:
+                        st.error(f"Error: {exc}")
+    st.stop()
+
 if "role" not in st.session_state:
     users = auth_config.get("credentials", {}).get("usernames", {})
     st.session_state["role"]         = users.get(username, {}).get("role", "staff")
@@ -135,6 +170,33 @@ with st.sidebar:
         logger.warning("Logout widget error: %s", _exc)
         if st.button("Sign out", key="manual_signout"):
             _force_logout()
+
+    # ── Change password (self-service) ────────────────────────
+    with st.expander("🔑 Change password"):
+        with st.form("change_pw_sidebar"):
+            _cur_pw = st.text_input("Current password", type="password", key="cpw_cur")
+            _new_pw = st.text_input("New password", type="password", key="cpw_new")
+            _cfm_pw = st.text_input("Confirm new password", type="password", key="cpw_cfm")
+            if st.form_submit_button("Update password"):
+                _errs = []
+                ok, msg = v.password(_new_pw)
+                if not ok:
+                    _errs.append(msg)
+                if _new_pw != _cfm_pw:
+                    _errs.append("Passwords do not match.")
+                if not _cur_pw:
+                    _errs.append("Current password is required.")
+                if _errs:
+                    for _e in _errs:
+                        st.error(_e)
+                else:
+                    try:
+                        auth_module.change_own_password(username, _cur_pw, _new_pw)
+                        st.success("Password updated successfully.")
+                    except ValueError as _exc:
+                        st.error(str(_exc))
+                    except Exception as _exc:
+                        st.error(f"Error: {_exc}")
 
     st.markdown("<hr style='border:none;border-top:0.5px solid rgba(255,255,255,0.08);margin:8px 0'>",
                 unsafe_allow_html=True)
