@@ -53,10 +53,16 @@ def username(value: str) -> tuple[bool, str]:
 
 
 def password(value: str) -> tuple[bool, str]:
-    if len(value) < 6:
-        return False, "Password must be at least 6 characters."
+    if len(value) < 8:
+        return False, "Password must be at least 8 characters."
     if len(value) > 128:
         return False, "Password must be 128 characters or fewer."
+    if not re.search(r"[A-Z]", value):
+        return False, "Password must contain at least one uppercase letter."
+    if not re.search(r"[0-9]", value):
+        return False, "Password must contain at least one digit."
+    if not re.search(r"[^A-Za-z0-9]", value):
+        return False, "Password must contain at least one special character."
     return True, ""
 
 

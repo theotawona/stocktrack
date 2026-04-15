@@ -58,6 +58,7 @@ def _default_config() -> dict:
                     "password": hashed[0],
                     "role": "admin",
                     "property_id": None,
+                    "must_change_password": True,
                 },
                 "dev": {
                     "name": "Developer Support",
@@ -65,6 +66,7 @@ def _default_config() -> dict:
                     "password": hashed[1],
                     "role": "admin",
                     "property_id": None,
+                    "must_change_password": True,
                 },
             }
         },
@@ -301,9 +303,10 @@ def add_user(username: str, name: str, email: str, password: str, role: str) -> 
     hashed = _hash_passwords([password])[0]
     config["credentials"]["usernames"][username] = {
         "name": name, "email": email, "password": hashed, "role": role,
+        "must_change_password": True,
     }
     _save_config(config)
-    logger.info("User '%s' added with role '%s'.", username, role)
+    logger.info("User '%s' added with role '%s' (must change password).", username, role)
 
 
 def delete_user(username: str) -> None:
@@ -335,3 +338,58 @@ def update_user_property(username: str, property_id: int | None) -> None:
     config["credentials"]["usernames"][username]["property_id"] = property_id
     _save_config(config)
     logger.info("User '%s' property_id updated to '%s'.", username, property_id)
+
+
+def reset_user_password(username: str, new_password: str) -> None:
+    """Admin resets a user's password. Sets must_change_password flag."""
+    config = _load_config()
+    if username not in config["credentials"]["usernames"]:
+        raise ValueError(f"User '{username}' not found.")
+    hashed = _hash_passwords([new_password])[0]
+    config["credentials"]["usernames"][username]["password"] = hashed
+    config["credentials"]["usernames"][username]["must_change_password"] = True
+    _save_config(config)
+    logger.info("Password reset for user '%s' (must change on next login).", username)
+
+
+def change_own_password(username: str, current_password: str, new_password: str) -> None:
+    """User changes their own password after verifying the current one."""
+    import bcrypt
+    config = _load_config()
+    if username not in config["credentials"]["usernames"]:
+        raise ValueError(f"User '{username}' not found.")
+    stored_hash = config["credentials"]["usernames"][username]["password"]
+    if not bcrypt.checkpw(current_password.encode("utf-8"), stored_hash.encode("utf-8")):
+        raise ValueError("Current password is incorrect.")
+    hashed = _hash_passwords([new_password])[0]
+    config["credentials"]["usernames"][username]["password"] = hashed
+    config["credentials"]["usernames"][username]["must_change_password"] = False
+    _save_config(config)
+    logger.info("User '%s' changed their own password.", username)
+
+
+def must_change_password(username: str) -> bool:
+    """Check if the user is required to change their password."""
+    config = _load_config()
+    user = config.get("credentials", {}).get("usernames", {}).get(username, {})
+    return bool(user.get("must_change_password", False))
+
+
+def clear_must_change_flag(username: str) -> None:
+    """Clear the must_change_password flag (used after forced change)."""
+    config = _load_config()
+    if username in config["credentials"]["usernames"]:
+        config["credentials"]["usernames"][username]["must_change_password"] = False
+        _save_config(config)
+
+
+def set_forced_new_password(username: str, new_password: str) -> None:
+    """Set new password during forced-change flow and clear must_change_password."""
+    config = _load_config()
+    if username not in config["credentials"]["usernames"]:
+        raise ValueError(f"User '{username}' not found.")
+    hashed = _hash_passwords([new_password])[0]
+    config["credentials"]["usernames"][username]["password"] = hashed
+    config["credentials"]["usernames"][username]["must_change_password"] = False
+    _save_config(config)
+    logger.info("User '%s' completed forced password change.", username)
