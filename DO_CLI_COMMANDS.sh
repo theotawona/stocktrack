@@ -151,7 +151,7 @@ doctl apps spec get APP_ID | jq '.spec.services[0].envs'
 # ============================================================================
 
 # Check if app is running
-curl https://your-custom-domain.com/_stcore/health
+curl https://your-custom-domain.com/app/_stcore/health
 
 # Check DNS resolution
 nslookup your-domain.com

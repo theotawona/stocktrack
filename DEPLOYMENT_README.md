@@ -13,7 +13,8 @@ Your StockTrack app is ready for production deployment on a DigitalOcean Droplet
 3. **Test locally first:**
    ```bash
    docker compose up --build
-   # Visit http://localhost:8501
+   # Landing page: http://localhost:8501/
+   # App:          http://localhost:8501/app/
    ```
 
 4. **Deploy to a DigitalOcean Droplet:**
@@ -27,6 +28,8 @@ Your StockTrack app is ready for production deployment on a DigitalOcean Droplet
 | `docker-compose.yml` | Container orchestration with persistent volume |
 | `.dockerignore` | Exclude files from Docker build |
 | `backup_database.py` | SQLite backup utility |
+| `deploy/landing/index.html` | Branded landing page with social metadata |
+| `deploy/nginx/stocktrack.conf` | Nginx config with `/` landing + `/app/` proxy |
 | `DEPLOYMENT_GUIDE.md` | Complete deployment instructions |
 | `DEPLOYMENT_CHECKLIST.md` | Step-by-step checklist |
 

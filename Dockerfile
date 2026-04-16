@@ -4,9 +4,8 @@ FROM python:3.11-slim
 # Set working directory in container
 WORKDIR /app
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
-    build-essential \
+# Install curl for health check (build-essential not needed — all packages have pre-built wheels)
+RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     && rm -rf /var/lib/apt/lists/*
 

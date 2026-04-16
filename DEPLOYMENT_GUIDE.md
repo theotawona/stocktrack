@@ -166,7 +166,7 @@ This will:
 docker compose ps
 # Should show stocktrack running, healthy
 
-curl http://localhost:8501/_stcore/health
+curl http://localhost:8501/app/_stcore/health
 # Should return "ok"
 ```
 
@@ -177,29 +177,57 @@ curl http://localhost:8501/_stcore/health
 ### 5.1 Create Nginx Configuration
 
 ```bash
-nano /etc/nginx/sites-available/stocktrack
+mkdir -p /var/www/stocktrack-landing
+cp /opt/stocktrack/deploy/landing/index.html /var/www/stocktrack-landing/index.html
+cp /opt/stocktrack/deploy/nginx/stocktrack.conf /etc/nginx/sites-available/stocktrack
 ```
 
-Paste this configuration (replace `YOUR_DOMAIN` with your actual domain, or your Droplet IP for now):
+This setup gives you:
+- A branded landing page at `/` for clean social/link previews
+- The Streamlit app at `/app/`
+
+If your domain is not `ca-stocktrack.com`, edit `server_name` in `/etc/nginx/sites-available/stocktrack` before enabling the site.
 
 ```nginx
 server {
-    listen 80;
-    server_name YOUR_DOMAIN;
+  listen 80;
+  listen [::]:80;
+  server_name ca-stocktrack.com www.ca-stocktrack.com;
 
-    location / {
-        proxy_pass http://localhost:8501;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_read_timeout 86400;
+  root /var/www/stocktrack-landing;
+  index index.html;
 
-        # Required for Streamlit WebSocket connections
-        proxy_buffering off;
+  # Branded home page for clean link previews and browser tab title.
+  location = / {
+    try_files /index.html =404;
+  }
+
+  # Streamlit app runs under /app.
+  location /app/ {
+    proxy_pass http://127.0.0.1:8501/app/;
+    proxy_http_version 1.1;
+
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+
+    proxy_read_timeout 86400;
+    proxy_buffering off;
+  }
+
+  # ACME challenge path for Certbot.
+  location /.well-known/acme-challenge/ {
+    root /var/www/certbot;
+    try_files $uri =404;
+  }
+
+  # Optional direct link path.
+  location = /login {
+    return 301 /app/;
     }
 }
 ```
@@ -215,12 +243,14 @@ systemctl reload nginx
 
 ### 5.3 Test with HTTP
 
-Visit `http://YOUR_DROPLET_IP` in your browser — StockTrack should load.
+Visit `http://YOUR_DROPLET_IP` in your browser:
+- `/` should show your branded StockTrack landing page
+- `/app/` should open the Streamlit app
 
 ### 5.4 Add SSL Certificate (after domain is pointing to your IP)
 
 ```bash
-certbot --nginx -d YOUR_DOMAIN
+certbot --nginx -d YOUR_DOMAIN -d www.YOUR_DOMAIN
 ```
 
 Certbot will:
