@@ -180,7 +180,10 @@ GLOBAL_CSS = """
 /* ── Main background ── */
 [data-testid="stAppViewContainer"] { background: #f8f7f4; }
 .block-container { padding-top: 2rem; padding-bottom: 2rem; }
-#MainMenu, footer, header { visibility: hidden; }
+#MainMenu, footer { visibility: hidden; }
+header[data-testid="stHeader"] {
+    background: transparent !important;
+}
 
 /* ── Sidebar background ── */
 section[data-testid="stSidebar"] { background: #1a1a2e !important; }

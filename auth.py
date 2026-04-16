@@ -218,7 +218,8 @@ def login_page():
         padding:10px !important; font-weight:600 !important; font-size:15px !important;
     }
     .stButton > button:hover { background:#17855f !important; }
-    #MainMenu, footer, header { visibility: hidden; }
+    #MainMenu, footer { visibility: hidden; }
+    header[data-testid="stHeader"] { background: transparent !important; }
     </style>
     """, unsafe_allow_html=True)
 
