@@ -1,5 +1,5 @@
 import streamlit as st
-import streamlit as st
+import streamlit.components.v1 as components
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
@@ -19,6 +19,47 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
+
+
+def _apply_browser_branding() -> None:
+        # Keep forcing title/favicon in case Streamlit re-renders the shell.
+        components.html(
+                """
+                <script>
+                (function () {
+                    const title = "StockTrack by Corporate Analytica";
+                    const favicon = "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='0.9em' font-size='90'>📦</text></svg>";
+
+                    function applyBranding() {
+                        try {
+                            const doc = window.parent.document;
+                            doc.title = title;
+
+                            let icon = doc.querySelector("link[rel='icon']");
+                            if (!icon) {
+                                icon = doc.createElement("link");
+                                icon.rel = "icon";
+                                doc.head.appendChild(icon);
+                            }
+                            icon.href = favicon;
+                        } catch (e) {
+                            // Ignore cross-frame timing errors during first paint.
+                        }
+                    }
+
+                    applyBranding();
+                    setTimeout(applyBranding, 50);
+                    setTimeout(applyBranding, 250);
+                    setTimeout(applyBranding, 1000);
+                })();
+                </script>
+                """,
+                height=0,
+                width=0,
+        )
+
+
+_apply_browser_branding()
 
 # ── DB init ───────────────────────────────────────────────────
 try:
