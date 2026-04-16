@@ -11,7 +11,7 @@ import streamlit_authenticator as stauth
 
 from logger import logger
 
-CONFIG_PATH = Path(__file__).parent / "users.yaml"
+CONFIG_PATH = Path(os.environ.get("USERS_YAML_PATH", Path(__file__).parent / "users.yaml"))
 
 ROLE_PERMISSIONS: dict = {
     "admin": [
