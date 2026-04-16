@@ -142,6 +142,34 @@ def info_banner(text: str, kind: str = "info") -> None:
     )
 
 
+def sidebar_notice(text: str, kind: str = "error") -> None:
+    styles = {
+        "error": (
+            "background:#FDECEC;border:1px solid #D9534F;",
+            "#7F1D1D",
+        ),
+        "success": (
+            "background:#EAF7EC;border:1px solid #5C9E63;",
+            "#1F5130",
+        ),
+        "warning": (
+            "background:#FFF4E5;border:1px solid #D28B2D;",
+            "#6E4508",
+        ),
+        "info": (
+            "background:#EAF3FF;border:1px solid #4E79B8;",
+            "#183A66",
+        ),
+    }
+    container_style, text_color = styles.get(kind, styles["info"])
+    st.markdown(
+        f"<div class='sidebar-notice' style='{container_style}'>"
+        f"<span style='color:{text_color} !important;font-weight:600'>{_e(text)}</span>"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+
+
 # ── Error list ────────────────────────────────────────────────
 def show_errors(errors: list[str]) -> None:
     for e in errors:
@@ -194,7 +222,12 @@ section[data-testid="stSidebar"] > div:first-child { background: #1a1a2e !import
 section[data-testid="stSidebar"] p,
 section[data-testid="stSidebar"] span,
 section[data-testid="stSidebar"] label,
-section[data-testid="stSidebar"] div { color: #e8e6df; }
+section[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] * { color: #e8e6df; }
+
+/* Keep Streamlit alert colors intact inside sidebar */
+section[data-testid="stSidebar"] [data-baseweb="notification"] * {
+    color: inherit !important;
+}
 
 /* ── Sidebar nav buttons ── */
 section[data-testid="stSidebar"] .stButton > button {
@@ -245,6 +278,37 @@ section[data-testid="stSidebar"] .stButton > button[kind="secondary"] {
     color: #888780 !important;
     font-size: 12px !important;
     padding: 6px 16px !important;
+}
+
+/* ── Sidebar notices ── */
+section[data-testid="stSidebar"] .sidebar-notice {
+    margin: 8px 0 0;
+    padding: 10px 12px;
+    border-radius: 8px;
+    font-size: 12px;
+    line-height: 1.45;
+    border: 1px solid transparent;
+    font-weight: 500;
+}
+section[data-testid="stSidebar"] .sidebar-notice.sidebar-notice-error {
+    background: rgba(163,45,45,0.18);
+    border-color: rgba(163,45,45,0.5);
+    color: #ffe9e9 !important;
+}
+section[data-testid="stSidebar"] .sidebar-notice.sidebar-notice-success {
+    background: rgba(59,109,17,0.22);
+    border-color: rgba(59,109,17,0.45);
+    color: #effbdd !important;
+}
+section[data-testid="stSidebar"] .sidebar-notice.sidebar-notice-warning {
+    background: rgba(186,117,23,0.22);
+    border-color: rgba(186,117,23,0.45);
+    color: #fff3de !important;
+}
+section[data-testid="stSidebar"] .sidebar-notice.sidebar-notice-info {
+    background: rgba(24,95,165,0.22);
+    border-color: rgba(24,95,165,0.45);
+    color: #ebf5ff !important;
 }
 
 /* ── Metric cards ── */
