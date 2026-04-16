@@ -37,6 +37,26 @@ ROLE_PERMISSIONS: dict = {
 VALID_ROLES = list(ROLE_PERMISSIONS.keys())
 
 
+def _normalize_username(username: str) -> str:
+    return (username or "").strip().lower()
+
+
+def _resolve_username_key(config: dict, username: str) -> str | None:
+    users = config.get("credentials", {}).get("usernames", {})
+    if not isinstance(users, dict):
+        return None
+
+    candidate = (username or "").strip()
+    if candidate in users:
+        return candidate
+
+    normalized = _normalize_username(candidate)
+    for existing in users.keys():
+        if _normalize_username(existing) == normalized:
+            return existing
+    return None
+
+
 def _hash_passwords(passwords: list) -> list:
     """Hash passwords, handling both old and new stauth API."""
     try:
@@ -242,7 +262,10 @@ def login_page():
             if auth_status is False:
                 logger.warning("Failed login attempt.")
             elif auth_status:
+                username_key = _resolve_username_key(config, username) or _normalize_username(username)
                 st.session_state["_login_submitted"] = True
+                st.session_state["username"] = username_key
+                username = username_key
                 logger.info("User '%s' logged in.", username)
                 # Store property_id for staff
                 user_info = config.get("credentials", {}).get("usernames", {}).get(username, {})
@@ -299,7 +322,10 @@ def add_user(username: str, name: str, email: str, password: str, role: str) -> 
     if role not in VALID_ROLES:
         raise ValueError(f"Invalid role '{role}'.")
     config = _load_config()
-    if username in config["credentials"]["usernames"]:
+    username = _normalize_username(username)
+    if not username:
+        raise ValueError("Username is required.")
+    if _resolve_username_key(config, username) is not None:
         raise ValueError(f"Username '{username}' already exists.")
     hashed = _hash_passwords([password])[0]
     config["credentials"]["usernames"][username] = {
@@ -312,85 +338,93 @@ def add_user(username: str, name: str, email: str, password: str, role: str) -> 
 
 def delete_user(username: str) -> None:
     config = _load_config()
-    if username not in config["credentials"]["usernames"]:
+    username_key = _resolve_username_key(config, username)
+    if username_key is None:
         logger.warning("Delete: user '%s' not found.", username)
         return
-    del config["credentials"]["usernames"][username]
+    del config["credentials"]["usernames"][username_key]
     _save_config(config)
-    logger.info("User '%s' deleted.", username)
+    logger.info("User '%s' deleted.", username_key)
 
 
 def update_user_role(username: str, role: str) -> None:
     if role not in VALID_ROLES:
         raise ValueError(f"Invalid role '{role}'.")
     config = _load_config()
-    if username not in config["credentials"]["usernames"]:
+    username_key = _resolve_username_key(config, username)
+    if username_key is None:
         raise ValueError(f"User '{username}' not found.")
-    config["credentials"]["usernames"][username]["role"] = role
+    config["credentials"]["usernames"][username_key]["role"] = role
     _save_config(config)
-    logger.info("User '%s' role updated to '%s'.", username, role)
+    logger.info("User '%s' role updated to '%s'.", username_key, role)
 
 
 # Assign or update a user's property_id
 def update_user_property(username: str, property_id: int | None) -> None:
     config = _load_config()
-    if username not in config["credentials"]["usernames"]:
+    username_key = _resolve_username_key(config, username)
+    if username_key is None:
         raise ValueError(f"User '{username}' not found.")
-    config["credentials"]["usernames"][username]["property_id"] = property_id
+    config["credentials"]["usernames"][username_key]["property_id"] = property_id
     _save_config(config)
-    logger.info("User '%s' property_id updated to '%s'.", username, property_id)
+    logger.info("User '%s' property_id updated to '%s'.", username_key, property_id)
 
 
 def reset_user_password(username: str, new_password: str) -> None:
     """Admin resets a user's password. Sets must_change_password flag."""
     config = _load_config()
-    if username not in config["credentials"]["usernames"]:
+    username_key = _resolve_username_key(config, username)
+    if username_key is None:
         raise ValueError(f"User '{username}' not found.")
     hashed = _hash_passwords([new_password])[0]
-    config["credentials"]["usernames"][username]["password"] = hashed
-    config["credentials"]["usernames"][username]["must_change_password"] = True
+    config["credentials"]["usernames"][username_key]["password"] = hashed
+    config["credentials"]["usernames"][username_key]["must_change_password"] = True
     _save_config(config)
-    logger.info("Password reset for user '%s' (must change on next login).", username)
+    logger.info("Password reset for user '%s' (must change on next login).", username_key)
 
 
 def change_own_password(username: str, current_password: str, new_password: str) -> None:
     """User changes their own password after verifying the current one."""
     import bcrypt
     config = _load_config()
-    if username not in config["credentials"]["usernames"]:
+    username_key = _resolve_username_key(config, username)
+    if username_key is None:
         raise ValueError(f"User '{username}' not found.")
-    stored_hash = config["credentials"]["usernames"][username]["password"]
+    stored_hash = config["credentials"]["usernames"][username_key]["password"]
     if not bcrypt.checkpw(current_password.encode("utf-8"), stored_hash.encode("utf-8")):
         raise ValueError("Current password is incorrect.")
     hashed = _hash_passwords([new_password])[0]
-    config["credentials"]["usernames"][username]["password"] = hashed
-    config["credentials"]["usernames"][username]["must_change_password"] = False
+    config["credentials"]["usernames"][username_key]["password"] = hashed
+    config["credentials"]["usernames"][username_key]["must_change_password"] = False
     _save_config(config)
-    logger.info("User '%s' changed their own password.", username)
+    logger.info("User '%s' changed their own password.", username_key)
 
 
 def must_change_password(username: str) -> bool:
     """Check if the user is required to change their password."""
     config = _load_config()
-    user = config.get("credentials", {}).get("usernames", {}).get(username, {})
+    username_key = _resolve_username_key(config, username)
+    user = config.get("credentials", {}).get("usernames", {}).get(username_key or "", {})
     return bool(user.get("must_change_password", False))
 
 
 def clear_must_change_flag(username: str) -> None:
     """Clear the must_change_password flag (used after forced change)."""
     config = _load_config()
-    if username in config["credentials"]["usernames"]:
-        config["credentials"]["usernames"][username]["must_change_password"] = False
+    username_key = _resolve_username_key(config, username)
+    if username_key is not None:
+        config["credentials"]["usernames"][username_key]["must_change_password"] = False
         _save_config(config)
 
 
 def set_forced_new_password(username: str, new_password: str) -> None:
     """Set new password during forced-change flow and clear must_change_password."""
     config = _load_config()
-    if username not in config["credentials"]["usernames"]:
+    username_key = _resolve_username_key(config, username)
+    if username_key is None:
         raise ValueError(f"User '{username}' not found.")
     hashed = _hash_passwords([new_password])[0]
-    config["credentials"]["usernames"][username]["password"] = hashed
-    config["credentials"]["usernames"][username]["must_change_password"] = False
+    config["credentials"]["usernames"][username_key]["password"] = hashed
+    config["credentials"]["usernames"][username_key]["must_change_password"] = False
     _save_config(config)
-    logger.info("User '%s' completed forced password change.", username)
+    logger.info("User '%s' completed forced password change.", username_key)
