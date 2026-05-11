@@ -4,6 +4,12 @@ cookie:
   name: stocktrack_auth
 credentials:
   usernames:
+    Cynthia:
+      email: cynthia@corporateanalytica.co.za
+      must_change_password: false
+      name: Cynthia Charewa
+      password: $2b$12$K.dAKQi3Imwl2TIjsn.Gi.KCIES92EZqQN1L9IjqYqIGPqUGrw6Le
+      role: manager
     admin:
       email: admin@stocktrack.co.za
       name: Administrator
@@ -12,8 +18,9 @@ credentials:
       role: admin
     staff:
       email: staff@stocktrack.co.za
+      must_change_password: false
       name: Storeroom Staff
-      password: $2b$12$N18MneC1dGiEanPHwl73.ueq2KnbDEnSE.KJGioxZQXPaK/9ODCrC
+      password: $2b$12$sLmbjHQGBsQ7CWVM8j329uoNNevJ6LQFt1tV5RJVJxj.MUe5B6El2
       property_id: 1
       role: staff
 preauthorized:
