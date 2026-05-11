@@ -62,36 +62,11 @@ def render_my_requisitions(username, role, sel_prop_id, sel_room_id, _item_opts)
                         st.session_state["_basket_added_msg_text"] = f"✅ '{sel_req_item.split(' (')[0]}' added to basket."
                         st.rerun()
         else:
-            st.info("No stocked items available to select — you can still request unlisted items below.")
+            st.info("No stocked items available to select.")
 
-        # ── Custom / unlisted items basket ───────────────────────
-        st.markdown("**Add unlisted items (not yet in stock):**")
-        with st.form("req_add_custom", clear_on_submit=True):
-            cc1, cc2, cc3, cc4 = st.columns([3, 1, 1, 2])
-            custom_name  = cc1.text_input("Item name *")
-            custom_qty   = cc2.number_input("Qty", min_value=0.1, value=1.0, step=1.0)
-            custom_uom   = cc3.text_input("UOM", value="units")
-            custom_notes = cc4.text_input("Notes / specs")
-            if st.form_submit_button("Add unlisted item"):
-                if not custom_name.strip():
-                    st.error("Item name is required.")
-                elif custom_qty <= 0:
-                    st.error("Quantity must be greater than zero.")
-                else:
-                    st.session_state.req_custom_basket.append({
-                        "name":  custom_name.strip(),
-                        "qty":   custom_qty,
-                        "uom":   custom_uom.strip() or "units",
-                        "notes": custom_notes.strip(),
-                    })
-                    st.session_state["_basket_added_msg"] = True
-                    st.session_state["_basket_added_msg_text"] = f"✅ '{custom_name.strip()}' added to basket."
-                    st.rerun()
+        basket = st.session_state.req_basket
 
-        basket        = st.session_state.req_basket
-        custom_basket = st.session_state.req_custom_basket
-
-        if basket or custom_basket:
+        if basket:
             ui.section("Items in request")
             for i, b in enumerate(basket):
                 c1, c2 = st.columns([5, 1])
@@ -99,17 +74,10 @@ def render_my_requisitions(username, role, sel_prop_id, sel_room_id, _item_opts)
                 if c2.button("✕", key=f"rem_req_{i}"):
                     st.session_state.req_basket.pop(i)
                     st.rerun()
-            for i, b in enumerate(custom_basket):
-                c1, c2 = st.columns([5, 1])
-                c1.markdown(f"• {b['name']} — **{b['qty']} {b['uom']}** *(unlisted — procurement needed)*")
-                if c2.button("✕", key=f"rem_cust_{i}"):
-                    st.session_state.req_custom_basket.pop(i)
-                    st.rerun()
 
             if st.button("✅ Submit requisition", type="primary"):
                 purpose = st.session_state.get("req_purpose","")
-                all_items_combined = basket + [{"label": b["name"], "item_id": None, "qty": b["qty"]} for b in custom_basket]
-                errs = v.validate_requisition_form(purpose, all_items_combined)
+                errs = v.validate_requisition_form(purpose, basket)
                 if errs:
                     ui.show_errors(errs)
                 else:
@@ -123,11 +91,10 @@ def render_my_requisitions(username, role, sel_prop_id, sel_room_id, _item_opts)
                             purpose=purpose,
                             urgency=st.session_state.get("req_urgency","Normal"),
                             lines=lines,
-                            custom_lines=custom_basket,
+                            custom_lines=[],
                         )
                         logger.info("Requisition %s submitted by %s", ref, username)
                         st.session_state.req_basket = []
-                        st.session_state.req_custom_basket = []
                         st.success(f"Requisition {ref} submitted.")
                         st.rerun()
                     except Exception as exc:
@@ -136,7 +103,6 @@ def render_my_requisitions(username, role, sel_prop_id, sel_room_id, _item_opts)
 
         if st.button("🗑 Clear basket", key="clr_req"):
             st.session_state.req_basket = []
-            st.session_state.req_custom_basket = []
             st.rerun()
 
     ui.section("Stock issued to you")

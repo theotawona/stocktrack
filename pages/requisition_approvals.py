@@ -42,6 +42,9 @@ def render_requisition_approvals(username, sel_prop_id, _safe_int):
 	date_from = fc2.date_input("From", value=None, key="appr_date_from")
 	date_to   = fc3.date_input("To",   value=None, key="appr_date_to")
 
+	# Filter by requestor name
+	requestor_filter = st.text_input("Filter by requestor", placeholder="Leave blank to show all", label_visibility="collapsed", key="appr_requestor_filter")
+
 	try:
 		reqs = db.get_requisitions(
 			status=None if status_filter == "All" else status_filter,
@@ -54,8 +57,15 @@ def render_requisition_approvals(username, sel_prop_id, _safe_int):
 		st.error("Could not load requisitions.")
 		reqs = pd.DataFrame()
 
+	# Apply requestor filter
+	if not reqs.empty and requestor_filter:
+		reqs = reqs[reqs["requested_by"].str.contains(requestor_filter, case=False, na=False)]
+
 	if reqs.empty:
-		st.info(f"No {status_filter.lower()} requisitions.")
+		if requestor_filter:
+			st.info(f"No {status_filter.lower()} requisitions from requestor '{requestor_filter}'.")
+		else:
+			st.info(f"No {status_filter.lower()} requisitions.")
 	else:
 		URGENCY_COLOR = {"Normal":"#888780","Urgent":"#BA7517","Critical":"#A32D2D"}
 		for _, row in reqs.iterrows():
