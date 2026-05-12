@@ -69,14 +69,15 @@ def render_issue_stock(username, sel_prop_id, sel_room_id, _item_opts):
                 st.warning("This requisition has no approved stocked items remaining to issue.")
             else:
                 ui.section("Items to issue")
-                hdr = st.columns([3, 1, 1, 1, 1])
-                for col, lbl in zip(hdr, ["Item", "UOM", "Approved", "Already issued", "Issue now"]):
+                hdr = st.columns([3, 2, 1, 1, 1, 1])
+                for col, lbl in zip(hdr, ["Item", "Unit / Area", "UOM", "Approved", "Already issued", "Issue now"]):
                     col.markdown(f"**{lbl}**")
 
                 issue_quantities = {}
                 for _, line in lines_df.iterrows():
-                    c1, c2, c3, c4, c5 = st.columns([3, 1, 1, 1, 1])
+                    c1, c_loc, c2, c3, c4, c5 = st.columns([3, 2, 1, 1, 1, 1])
                     c1.markdown(str(line["item_name"]))
+                    c_loc.markdown(str(line.get("location_name") or "—"))
                     c2.markdown(str(line["uom"]))
                     approved = float(line["qty_approved"])
                     dispersed = float(line["qty_dispersed"])
@@ -200,7 +201,7 @@ def render_issue_stock(username, sel_prop_id, sel_room_id, _item_opts):
                     if float(cline["qty_remaining"]) <= 0:
                         continue
                     with st.expander(
-                        f"📦 {cline['item_name']} — {int(cline['qty_approved'])} {cline['uom']}  *(pending procurement)*",
+                        f"📦 {cline['item_name']} — {int(cline['qty_approved'])} {cline['uom']} · {cline.get('location_name') or '—'}  *(pending procurement)*",
                         expanded=True,
                     ):
                         if cline["notes"]:

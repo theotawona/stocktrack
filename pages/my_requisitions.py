@@ -23,6 +23,13 @@ def render_my_requisitions(username, role, sel_prop_id, sel_room_id, _item_opts)
         staff_prop_id = auth_module.current_property_id() if hasattr(auth_module, 'current_property_id') else st.session_state.get('property_id')
         sel_prop_id = staff_prop_id
     item_opts_all = _item_opts(property_id=sel_prop_id, storeroom_id=sel_room_id)
+    locations_df = db.get_property_locations(property_id=sel_prop_id) if sel_prop_id else db.pd.DataFrame()
+    location_opts = {}
+    if not locations_df.empty:
+        for _, loc in locations_df.iterrows():
+            prefix = "Unit" if str(loc.get("location_type")) == "UNIT" else "Common"
+            label = f"{prefix}: {loc.get('location_name') or loc.get('location_code')}"
+            location_opts[label] = int(loc["id"])
 
     # Show inline success cue if an item was just added to the basket
     if st.session_state.pop("_basket_added_msg", None):
@@ -30,17 +37,29 @@ def render_my_requisitions(username, role, sel_prop_id, sel_room_id, _item_opts)
 
     with st.expander("+ New requisition", expanded=False):
         with st.form("req_header", clear_on_submit=False):
-            c1, c2       = st.columns(2)
+            c1, c2, c3   = st.columns(3)
             req_purpose  = c1.text_input("Purpose / reason *", placeholder="e.g. Monthly cleaning supplies")
             req_urgency  = c2.selectbox("Urgency", ["Normal","Urgent","Critical"])
+            req_location_label = c3.selectbox(
+                "Unit / common area *",
+                ["Select unit/common area"] + list(location_opts.keys()),
+            )
             if st.form_submit_button("Set details"):
                 errs = v.validate_requisition_form(req_purpose, ["placeholder"])
                 errs = [e for e in errs if "item" not in e.lower()]
+                if not sel_prop_id:
+                    errs.append("Select a property before creating a requisition.")
+                if not location_opts:
+                    errs.append("No units/common areas found for this property. Add units or use default common areas.")
+                if req_location_label == "Select unit/common area":
+                    errs.append("Unit / common area is required.")
                 if errs:
                     ui.show_errors(errs)
                 else:
                     st.session_state.req_purpose = req_purpose.strip()
                     st.session_state.req_urgency = req_urgency
+                    st.session_state.req_location_id = location_opts[req_location_label]
+                    st.session_state.req_location_label = req_location_label
 
         # ── Stocked items basket ─────────────────────────────────
         if item_opts_all:
@@ -52,11 +71,15 @@ def render_my_requisitions(username, role, sel_prop_id, sel_room_id, _item_opts)
                 if rc3.form_submit_button("Add"):
                     if req_qty <= 0:
                         st.error("Quantity must be greater than zero.")
+                    elif not st.session_state.get("req_location_id"):
+                        st.error("Set requisition details first and select a unit/common area.")
                     else:
                         st.session_state.req_basket.append({
                             "label":   sel_req_item,
                             "item_id": item_opts_all[sel_req_item],
                             "qty":     req_qty,
+                            "location_id": st.session_state.get("req_location_id"),
+                            "location_label": st.session_state.get("req_location_label", ""),
                         })
                         st.session_state["_basket_added_msg"] = True
                         st.session_state["_basket_added_msg_text"] = f"✅ '{sel_req_item.split(' (')[0]}' added to basket."
@@ -70,7 +93,10 @@ def render_my_requisitions(username, role, sel_prop_id, sel_room_id, _item_opts)
             ui.section("Items in request")
             for i, b in enumerate(basket):
                 c1, c2 = st.columns([5, 1])
-                c1.markdown(f"• {b['label'].split(' (')[0]} — **{b['qty']}** *(stocked)*")
+                c1.markdown(
+                    f"• {b['label'].split(' (')[0]} — **{b['qty']}** *(stocked)*  \n"
+                    f"&nbsp;&nbsp;↳ {b.get('location_label', 'Location not set')}"
+                )
                 if c2.button("✕", key=f"rem_req_{i}"):
                     st.session_state.req_basket.pop(i)
                     st.rerun()
@@ -82,21 +108,26 @@ def render_my_requisitions(username, role, sel_prop_id, sel_room_id, _item_opts)
                     ui.show_errors(errs)
                 else:
                     try:
-                        lines = [(b["item_id"], b["qty"]) for b in basket]
-                        ref   = db.create_requisition(
-                            requested_by=username,
-                            role=role,
-                            property_id=sel_prop_id,
-                            storeroom_id=sel_room_id,
-                            purpose=purpose,
-                            urgency=st.session_state.get("req_urgency","Normal"),
-                            lines=lines,
-                            custom_lines=[],
-                        )
-                        logger.info("Requisition %s submitted by %s", ref, username)
-                        st.session_state.req_basket = []
-                        st.success(f"Requisition {ref} submitted.")
-                        st.rerun()
+                        if any(not b.get("location_id") for b in basket):
+                            st.error("Each requested item must have a unit/common area.")
+                        else:
+                            lines = [(b["item_id"], b["qty"], b["location_id"]) for b in basket]
+                            ref   = db.create_requisition(
+                                requested_by=username,
+                                role=role,
+                                property_id=sel_prop_id,
+                                storeroom_id=sel_room_id,
+                                purpose=purpose,
+                                urgency=st.session_state.get("req_urgency","Normal"),
+                                lines=lines,
+                                custom_lines=[],
+                            )
+                            logger.info("Requisition %s submitted by %s", ref, username)
+                            st.session_state.req_basket = []
+                            st.session_state.req_location_id = None
+                            st.session_state.req_location_label = ""
+                            st.success(f"Requisition {ref} submitted.")
+                            st.rerun()
                     except Exception as exc:
                         logger.error("create_requisition failed: %s", exc)
                         st.error("Could not submit requisition.")
@@ -279,11 +310,11 @@ def render_my_requisitions(username, role, sel_prop_id, sel_room_id, _item_opts)
                 try:
                     lines = db.get_requisition_lines(int(row["id"]))
                     if not lines.empty:
-                        ld = lines[["item_name","uom","qty_requested","qty_approved","qty_dispersed","is_custom"]].copy()
+                        ld = lines[["item_name","location_name","uom","qty_requested","qty_approved","qty_dispersed","is_custom"]].copy()
                         ld["Type"] = ld["is_custom"].apply(lambda x: "🛒 Procurement" if x else "📦 Stocked")
                         ld = ld.drop(columns=["is_custom"])
-                        ld.columns = ["Item","UOM","Requested","Approved","Dispersed","Type"]
-                        ld = ld[["Type","Item","UOM","Requested","Approved","Dispersed"]]
+                        ld.columns = ["Item","Unit / Area","UOM","Requested","Approved","Dispersed","Type"]
+                        ld = ld[["Type","Item","Unit / Area","UOM","Requested","Approved","Dispersed"]]
                         st.dataframe(ld, width='stretch', hide_index=True)
                 except Exception as exc:
                     logger.error("req lines fetch failed: %s", exc)
@@ -345,3 +376,14 @@ def render_my_requisitions(username, role, sel_prop_id, sel_room_id, _item_opts)
                         except Exception as exc:
                             logger.error("cancel_requisition failed: %s", exc)
                             st.error("Could not cancel.")
+
+                if row["status"] in ("Pending", "Rejected", "Cancelled"):
+                    if st.button("Delete Requisition", key=f"delete_req_{row['id']}"):
+                        try:
+                            db.delete_requisition(int(row["id"]))
+                            logger.info("Requisition %s deleted by %s", row["ref_number"], username)
+                            st.success("Requisition deleted.")
+                            st.rerun()
+                        except Exception as exc:
+                            logger.error("delete_requisition failed: %s", exc)
+                            st.error("Could not delete requisition.")

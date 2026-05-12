@@ -114,6 +114,14 @@ from pathlib import Path
 
 DB_PATH = Path(os.environ.get("DB_PATH", Path(__file__).parent / "stock_tracker.db"))
 
+DEFAULT_COMMON_AREAS = [
+    ("LOBBY", "Lobby"),
+    ("RECEPTION", "Reception"),
+    ("CORRIDOR", "Corridor"),
+    ("PARKING", "Parking"),
+    ("POOL", "Pool"),
+]
+
 def get_conn():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
@@ -129,6 +137,17 @@ def init_db():
             address TEXT,
             notes TEXT,
             created_at TEXT DEFAULT (datetime('now'))
+        );
+
+        CREATE TABLE IF NOT EXISTS property_locations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            property_id INTEGER NOT NULL REFERENCES properties(id) ON DELETE CASCADE,
+            location_type TEXT NOT NULL CHECK (location_type IN ('UNIT','COMMON_AREA')),
+            location_code TEXT NOT NULL,
+            location_name TEXT NOT NULL,
+            is_active INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT DEFAULT (datetime('now')),
+            UNIQUE(property_id, location_type, location_code)
         );
 
         CREATE TABLE IF NOT EXISTS storerooms (
@@ -275,6 +294,7 @@ def init_db():
             "ALTER TABLE requisition_lines ADD COLUMN custom_uom TEXT",
             "ALTER TABLE requisition_lines ADD COLUMN custom_notes TEXT",
             "ALTER TABLE requisition_lines ADD COLUMN linked_item_id INTEGER REFERENCES items(id)",
+            "ALTER TABLE requisition_lines ADD COLUMN location_id INTEGER REFERENCES property_locations(id)",
         ]:
             try:
                 conn.execute(_col_sql)
@@ -284,8 +304,50 @@ def init_db():
         # Older installs created requisition_lines.item_id as NOT NULL.
         # Mixed-basket requisitions store unlisted items with item_id = NULL.
         _ensure_requisition_lines_item_nullable(conn)
+        _seed_common_areas_for_all_properties(conn)
+        _backfill_requisition_line_locations(conn)
         if os.environ.get("SEED_DEMO", "false").lower() == "true":
             _seed_demo_data(conn)
+
+
+def _seed_common_areas_for_property(conn, property_id):
+    for code, name in DEFAULT_COMMON_AREAS:
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO property_locations
+              (property_id, location_type, location_code, location_name, is_active)
+            VALUES (?, 'COMMON_AREA', ?, ?, 1)
+            """,
+            (property_id, code, name),
+        )
+
+
+def _seed_common_areas_for_all_properties(conn):
+    rows = conn.execute("SELECT id FROM properties").fetchall()
+    for row in rows:
+        _seed_common_areas_for_property(conn, int(row["id"]))
+
+
+def _backfill_requisition_line_locations(conn):
+    conn.execute(
+        """
+        UPDATE requisition_lines
+        SET location_id = (
+            SELECT pl.id
+            FROM requisitions r
+            JOIN property_locations pl
+              ON pl.property_id = r.property_id
+             AND pl.location_type = 'COMMON_AREA'
+             AND pl.location_code = 'LOBBY'
+            WHERE r.id = requisition_lines.requisition_id
+            LIMIT 1
+        )
+        WHERE location_id IS NULL
+          AND EXISTS (
+            SELECT 1 FROM requisitions r2 WHERE r2.id = requisition_lines.requisition_id AND r2.property_id IS NOT NULL
+          )
+        """
+    )
 
 
 def _ensure_requisition_lines_item_nullable(conn):
@@ -314,14 +376,15 @@ def _ensure_requisition_lines_item_nullable(conn):
                 custom_item_name TEXT,
                 custom_uom TEXT,
                 custom_notes TEXT,
-                linked_item_id INTEGER REFERENCES items(id)
+                linked_item_id INTEGER REFERENCES items(id),
+                location_id INTEGER REFERENCES property_locations(id)
             )
         """)
 
         conn.execute(f"""
             INSERT INTO requisition_lines_new (
                 id, requisition_id, item_id, qty_requested, qty_approved, qty_dispersed,
-                is_custom, custom_item_name, custom_uom, custom_notes, linked_item_id
+                is_custom, custom_item_name, custom_uom, custom_notes, linked_item_id, location_id
             )
             SELECT
                 id,
@@ -334,7 +397,8 @@ def _ensure_requisition_lines_item_nullable(conn):
                 {"custom_item_name" if "custom_item_name" in existing else "NULL"},
                 {"custom_uom" if "custom_uom" in existing else "NULL"},
                 {"custom_notes" if "custom_notes" in existing else "NULL"},
-                {"linked_item_id" if "linked_item_id" in existing else "NULL"}
+                {"linked_item_id" if "linked_item_id" in existing else "NULL"},
+                {"location_id" if "location_id" in existing else "NULL"}
             FROM requisition_lines
         """)
 
@@ -401,7 +465,8 @@ def get_properties():
 
 def add_property(name, address, notes):
     with get_conn() as conn:
-        conn.execute("INSERT INTO properties (name, address, notes) VALUES (?,?,?)", (name, address, notes))
+        cur = conn.execute("INSERT INTO properties (name, address, notes) VALUES (?,?,?)", (name, address, notes))
+        _seed_common_areas_for_property(conn, int(cur.lastrowid))
 
 def update_property(id, name, address, notes):
     with get_conn() as conn:
@@ -410,6 +475,115 @@ def update_property(id, name, address, notes):
 def delete_property(id):
     with get_conn() as conn:
         conn.execute("DELETE FROM properties WHERE id=?", (id,))
+
+
+def get_property_locations(property_id=None, location_type=None, include_inactive=False):
+    q = """
+        SELECT pl.*, p.name as property_name
+        FROM property_locations pl
+        JOIN properties p ON p.id = pl.property_id
+        WHERE 1=1
+    """
+    params = []
+    if property_id:
+        q += " AND pl.property_id = ?"
+        params.append(property_id)
+    if location_type:
+        q += " AND pl.location_type = ?"
+        params.append(location_type)
+    if not include_inactive:
+        q += " AND pl.is_active = 1"
+    q += " ORDER BY p.name, pl.location_type, pl.location_code"
+    with get_conn() as conn:
+        return pd.read_sql(q, conn, params=params)
+
+
+def add_unit_location(property_id, unit_number):
+    unit_number = (unit_number or "").strip()
+    if not unit_number:
+        raise ValueError("Unit number is required.")
+    with get_conn() as conn:
+        conn.execute(
+            """
+            INSERT INTO property_locations
+              (property_id, location_type, location_code, location_name, is_active)
+            VALUES (?, 'UNIT', ?, ?, 1)
+            """,
+            (property_id, unit_number, f"Unit {unit_number}"),
+        )
+
+
+def update_property_location(location_id, location_code, is_active):
+    location_code = (location_code or "").strip()
+    if not location_code:
+        raise ValueError("Location code cannot be empty.")
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT location_type FROM property_locations WHERE id = ?",
+            (location_id,),
+        ).fetchone()
+        if not row:
+            raise ValueError("Location not found.")
+        location_name = f"Unit {location_code}" if row["location_type"] == "UNIT" else location_code.replace("_", " ").title()
+        conn.execute(
+            """
+            UPDATE property_locations
+            SET location_code = ?, location_name = ?, is_active = ?
+            WHERE id = ?
+            """,
+            (location_code, location_name, 1 if is_active else 0, location_id),
+        )
+
+
+def import_units_from_rows(rows):
+    results = {"created": 0, "updated": 0, "errors": []}
+    if not rows:
+        return results
+
+    with get_conn() as conn:
+        props = conn.execute("SELECT id, name FROM properties").fetchall()
+        by_name = {str(r["name"]).strip().lower(): int(r["id"]) for r in props}
+
+        for idx, row in enumerate(rows, start=1):
+            prop_name = str(row.get("property", "")).strip()
+            unit_number = str(row.get("unit_number", "")).strip()
+            if not prop_name or not unit_number:
+                results["errors"].append(f"Row {idx}: property and unit_number are required.")
+                continue
+
+            property_id = by_name.get(prop_name.lower())
+            if not property_id:
+                results["errors"].append(f"Row {idx}: property '{prop_name}' not found.")
+                continue
+
+            existing = conn.execute(
+                """
+                SELECT id FROM property_locations
+                WHERE property_id = ? AND location_type = 'UNIT' AND location_code = ?
+                """,
+                (property_id, unit_number),
+            ).fetchone()
+            if existing:
+                conn.execute(
+                    """
+                    UPDATE property_locations
+                    SET location_name = ?, is_active = 1
+                    WHERE id = ?
+                    """,
+                    (f"Unit {unit_number}", int(existing["id"])),
+                )
+                results["updated"] += 1
+            else:
+                conn.execute(
+                    """
+                    INSERT INTO property_locations
+                      (property_id, location_type, location_code, location_name, is_active)
+                    VALUES (?, 'UNIT', ?, ?, 1)
+                    """,
+                    (property_id, unit_number, f"Unit {unit_number}"),
+                )
+                results["created"] += 1
+    return results
 
 # ── Storerooms ────────────────────────────────────────────────
 def get_storerooms(property_id=None):
@@ -759,16 +933,28 @@ def create_requisition(requested_by, role, property_id, storeroom_id, purpose, u
             VALUES (?,?,?,?,?,?,?,'Pending')""",
             (ref, requested_by, role, property_id, storeroom_id, purpose, urgency))
         req_id = cur.lastrowid
-        for item_id, qty in (lines or []):
-            conn.execute("""
-                INSERT INTO requisition_lines (requisition_id, item_id, qty_requested, is_custom)
-                VALUES (?,?,?,0)""", (req_id, item_id, qty))
+        for line in (lines or []):
+            if len(line) >= 3:
+                item_id, qty, location_id = line[0], line[1], line[2]
+            else:
+                item_id, qty = line[0], line[1]
+                location_id = None
+            conn.execute(
+                """
+                INSERT INTO requisition_lines (requisition_id, item_id, qty_requested, is_custom, location_id)
+                VALUES (?,?,?,0,?)
+                """,
+                (req_id, item_id, qty, location_id),
+            )
         for cl in (custom_lines or []):
-            conn.execute("""
+            conn.execute(
+                """
                 INSERT INTO requisition_lines
-                  (requisition_id, item_id, qty_requested, is_custom, custom_item_name, custom_uom, custom_notes)
-                VALUES (?,NULL,?,1,?,?,?)""",
-                (req_id, cl["qty"], cl["name"], cl.get("uom", "units"), cl.get("notes", "")))
+                  (requisition_id, item_id, qty_requested, is_custom, custom_item_name, custom_uom, custom_notes, location_id)
+                VALUES (?,NULL,?,1,?,?,?,?)
+                """,
+                (req_id, cl["qty"], cl["name"], cl.get("uom", "units"), cl.get("notes", ""), cl.get("location_id")),
+            )
     return ref
 
 def get_requisitions(requested_by=None, status=None, property_id=None, date_from=None, date_to=None):
@@ -809,7 +995,8 @@ def get_requisition_lines(requisition_id):
             SELECT rl.id, rl.requisition_id, rl.item_id, rl.qty_requested,
                    rl.qty_approved, rl.qty_dispersed,
                    rl.is_custom, rl.custom_item_name, rl.custom_uom, rl.custom_notes,
-                   rl.linked_item_id,
+                   rl.linked_item_id, rl.location_id,
+                   pl.location_type, pl.location_code, pl.location_name,
                    COALESCE(i.name, rl.custom_item_name) as item_name,
                    COALESCE(i.uom,  rl.custom_uom)       as uom,
                    COALESCE(i.qty, 0)                    as stock_qty,
@@ -819,6 +1006,7 @@ def get_requisition_lines(requisition_id):
             LEFT JOIN items i ON i.id = rl.item_id
             LEFT JOIN storerooms s ON s.id = i.storeroom_id
             LEFT JOIN properties p ON p.id = s.property_id
+            LEFT JOIN property_locations pl ON pl.id = rl.location_id
             WHERE rl.requisition_id = ?
         """, conn, params=[requisition_id])
 
@@ -888,6 +1076,20 @@ def cancel_requisition(req_id, cancelled_by):
             WHERE id=? AND status IN ('Pending','Approved')""",
             (cancelled_by, req_id))
 
+
+def delete_requisition(req_id):
+    """Delete a requisition only when it is Pending, Rejected, or Cancelled."""
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT id, status FROM requisitions WHERE id=?",
+            (req_id,),
+        ).fetchone()
+        if not row:
+            raise ValueError("Requisition not found.")
+        if row["status"] not in ("Pending", "Rejected", "Cancelled"):
+            raise ValueError("Only Pending, Rejected, or Cancelled requisitions can be deleted.")
+        conn.execute("DELETE FROM requisitions WHERE id=?", (req_id,))
+
 def get_requisition_counts():
     with get_conn() as conn:
         rows = conn.execute("""
@@ -922,9 +1124,12 @@ def get_requisition_lines_remaining(requisition_id):
                    i.name as item_name, i.uom, i.qty as stock_qty, i.unit_cost,
                    COALESCE(rl.qty_approved, 0) as qty_approved,
                    COALESCE(rl.qty_dispersed, 0) as qty_dispersed,
+                     rl.location_id,
+                     pl.location_type, pl.location_code, pl.location_name,
                    (COALESCE(rl.qty_approved, 0) - COALESCE(rl.qty_dispersed, 0)) as qty_remaining
             FROM requisition_lines rl
             JOIN items i ON i.id = rl.item_id
+                 LEFT JOIN property_locations pl ON pl.id = rl.location_id
             WHERE rl.requisition_id = ?
               AND COALESCE(rl.is_custom, 0) = 0
               AND COALESCE(rl.qty_approved, 0) > 0
@@ -938,10 +1143,13 @@ def get_requisition_custom_lines_remaining(requisition_id):
             SELECT rl.id, rl.requisition_id, rl.custom_item_name as item_name,
                    COALESCE(rl.custom_uom, 'units') as uom,
                    COALESCE(rl.custom_notes, '') as notes,
+                     rl.location_id,
+                     pl.location_type, pl.location_code, pl.location_name,
                    COALESCE(rl.qty_approved, 0) as qty_approved,
                    COALESCE(rl.qty_dispersed, 0) as qty_dispersed,
                    (COALESCE(rl.qty_approved, 0) - COALESCE(rl.qty_dispersed, 0)) as qty_remaining
             FROM requisition_lines rl
+                 LEFT JOIN property_locations pl ON pl.id = rl.location_id
             WHERE rl.requisition_id = ?
               AND COALESCE(rl.is_custom, 0) = 1
               AND COALESCE(rl.qty_approved, 0) > 0

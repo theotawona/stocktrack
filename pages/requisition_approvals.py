@@ -97,12 +97,13 @@ def render_requisition_approvals(username, sel_prop_id, _safe_int):
 
 				approved_qtys = {}
 				if not lines.empty:
-					hdr = st.columns([3, 1, 1, 1, 1])
-					for col, lbl in zip(hdr, ["Item","UOM","Requested","In stock","Approve qty"]):
+					hdr = st.columns([3, 2, 1, 1, 1, 1])
+					for col, lbl in zip(hdr, ["Item","Unit / Area","UOM","Requested","In stock","Approve qty"]):
 						col.markdown(f"**{lbl}**")
 
 					for _, line in lines.iterrows():
-						lc1,lc2,lc3,lc4,lc5 = st.columns([3,1,1,1,1])
+						lc1,lc_loc,lc2,lc3,lc4,lc5 = st.columns([3,2,1,1,1,1])
+						lc_loc.markdown(str(line.get("location_name") or "—"))
 						is_custom = bool(line.get("is_custom", 0))
 						if is_custom:
 							lc1.markdown(

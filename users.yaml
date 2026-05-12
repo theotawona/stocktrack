@@ -23,5 +23,12 @@ credentials:
       password: $2b$12$sLmbjHQGBsQ7CWVM8j329uoNNevJ6LQFt1tV5RJVJxj.MUe5B6El2
       property_id: 1
       role: staff
+    staff2:
+      email: ''
+      must_change_password: false
+      name: Staff 2
+      password: $2b$12$dFJO5mJX6Lttt5AZyvEOe.cCbiA3j/E9KZlPUA3Yus.Wj.dIat3Mi
+      property_id: 1
+      role: staff
 preauthorized:
   emails: []

@@ -7,29 +7,25 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import pytest
-import tempfile
 import os
-
-# Point the DB to a temp file before importing database
-_tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
-_tmp.close()
-os.environ["STOCKTRACK_TEST_DB"] = _tmp.name
 
 import database as db
 
-# Monkey-patch DB_PATH for tests
-db.DB_PATH = Path(_tmp.name)
-
 
 @pytest.fixture(autouse=True)
-def fresh_db():
-    """Re-create schema before every test; wipe after."""
-    if Path(_tmp.name).exists():
-        os.remove(_tmp.name)
+def fresh_db(tmp_path):
+    """Use an isolated SQLite file per test to avoid Windows file locks."""
+    original_path = db.DB_PATH
+    original_seed_demo = os.environ.get("SEED_DEMO")
+    db.DB_PATH = tmp_path / "test.db"
+    os.environ["SEED_DEMO"] = "true"
     db.init_db()
     yield
-    if Path(_tmp.name).exists():
-        os.remove(_tmp.name)
+    db.DB_PATH = original_path
+    if original_seed_demo is None:
+        os.environ.pop("SEED_DEMO", None)
+    else:
+        os.environ["SEED_DEMO"] = original_seed_demo
 
 
 # ── Properties ────────────────────────────────────────────────
@@ -265,6 +261,46 @@ class TestRequisitions:
         reqs = db.get_requisitions()
         row  = reqs[reqs["id"] == rid].iloc[0]
         assert row["status"] == "Cancelled"
+
+    def test_delete_pending_requisition(self):
+        iid, sid, pid = self._setup()
+        ref = db.create_requisition("tester", "staff", pid, sid, "Purpose", "Normal", [(iid, 1)])
+        reqs = db.get_requisitions()
+        rid = int(reqs[reqs["ref_number"] == ref]["id"].values[0])
+        db.delete_requisition(rid)
+        reqs_after = db.get_requisitions()
+        assert ref not in reqs_after["ref_number"].values
+
+    def test_delete_rejected_requisition(self):
+        iid, sid, pid = self._setup()
+        ref = db.create_requisition("tester", "staff", pid, sid, "Purpose", "Normal", [(iid, 1)])
+        reqs = db.get_requisitions()
+        rid = int(reqs[reqs["ref_number"] == ref]["id"].values[0])
+        db.review_requisition(rid, "manager", "Rejected", "not needed", {})
+        db.delete_requisition(rid)
+        reqs_after = db.get_requisitions()
+        assert ref not in reqs_after["ref_number"].values
+
+    def test_delete_cancelled_requisition(self):
+        iid, sid, pid = self._setup()
+        ref = db.create_requisition("tester", "staff", pid, sid, "Purpose", "Normal", [(iid, 1)])
+        reqs = db.get_requisitions()
+        rid = int(reqs[reqs["ref_number"] == ref]["id"].values[0])
+        db.cancel_requisition(rid, "tester")
+        db.delete_requisition(rid)
+        reqs_after = db.get_requisitions()
+        assert ref not in reqs_after["ref_number"].values
+
+    def test_delete_non_pending_or_rejected_raises(self):
+        iid, sid, pid = self._setup()
+        ref = db.create_requisition("tester", "staff", pid, sid, "Purpose", "Normal", [(iid, 1)])
+        reqs = db.get_requisitions()
+        rid = int(reqs[reqs["ref_number"] == ref]["id"].values[0])
+        lines = db.get_requisition_lines(rid)
+        lid = int(lines.iloc[0]["id"])
+        db.review_requisition(rid, "manager", "Approved", "ok", {lid: 1})
+        with pytest.raises(ValueError, match="Pending, Rejected, or Cancelled"):
+            db.delete_requisition(rid)
 
 
 # ── Reconciliation ────────────────────────────────────────────
