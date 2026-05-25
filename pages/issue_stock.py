@@ -30,204 +30,217 @@ def render_issue_stock(username, sel_prop_id, sel_room_id, _item_opts):
             "A requisition must be submitted and approved before stock can be issued against it."
         )
     else:
-        req_labels = {
-            f"{row['ref_number']} — {row['requested_by']}  ({row.get('property_name', '')})": int(row['id'])
-            for _, row in approved_reqs.iterrows()
-        }
-        sel_label   = st.selectbox("Select approved requisition", list(req_labels.keys()), key="sel_req_label")
-        sel_req_id  = req_labels[sel_label]
-        sel_req_row = approved_reqs[approved_reqs['id'] == sel_req_id].iloc[0]
-
-        with st.expander("Issuance details", expanded=True):
-            c1, c2, c3 = st.columns(3)
-            c1.text_input("Recipient", value=str(sel_req_row.get('requested_by', '')), disabled=True)
-            c2.text_input("Issued by", value=st.session_state.get("display_name", username), key="iss_by")
-            c3.date_input("Date", value=date.today(), key="iss_date")
-            st.text_input("Note / reason", value=str(sel_req_row.get('purpose', '')), key="iss_note")
-
-        # Load remaining lines for the selected requisition
-        try:
-            lines_df = db.get_requisition_lines_remaining(sel_req_id)
-        except Exception as exc:
-            logger.error("get_requisition_lines_remaining failed: %s", exc)
-            st.error("Could not load requisition lines.")
-            lines_df = db.pd.DataFrame()
-
-        if lines_df.empty:
-            st.warning("This requisition has no approved stocked items remaining to issue.")
+        # Filter by requestor name
+        requestor_filter = st.text_input("Filter by requestor", placeholder="Leave blank to show all", label_visibility="collapsed", key="issue_requestor_filter")
+        filtered_reqs = approved_reqs.copy()
+        if requestor_filter:
+            filtered_reqs = filtered_reqs[filtered_reqs["requested_by"].str.contains(requestor_filter, case=False, na=False)]
+        
+        if filtered_reqs.empty:
+            if requestor_filter:
+                st.info(f"No approved requisitions from requestor '{requestor_filter}'.")
+            else:
+                st.info("No approved requisitions available for issuing. A requisition must be submitted and approved before stock can be issued against it.")
         else:
-            ui.section("Items to issue")
-            hdr = st.columns([3, 1, 1, 1, 1])
-            for col, lbl in zip(hdr, ["Item", "UOM", "Approved", "Already issued", "Issue now"]):
-                col.markdown(f"**{lbl}**")
+            req_labels = {
+                f"{row['ref_number']} — {row['requested_by']}  ({row.get('property_name', '')})": int(row['id'])
+                for _, row in filtered_reqs.iterrows()
+            }
+            sel_label   = st.selectbox("Select approved requisition", list(req_labels.keys()), key="sel_req_label")
+            sel_req_id  = req_labels[sel_label]
+            sel_req_row = filtered_reqs[filtered_reqs['id'] == sel_req_id].iloc[0]
 
-            issue_quantities = {}
-            for _, line in lines_df.iterrows():
-                c1, c2, c3, c4, c5 = st.columns([3, 1, 1, 1, 1])
-                c1.markdown(str(line["item_name"]))
-                c2.markdown(str(line["uom"]))
-                approved = float(line["qty_approved"])
-                dispersed = float(line["qty_dispersed"])
-                remaining = float(line["qty_remaining"])
-                c3.markdown(str(int(approved)))
-                c4.markdown(str(int(dispersed)))
-                if remaining > 0:
-                    qty = c5.number_input(
-                        "", min_value=0.0, max_value=remaining,
-                        value=remaining, step=1.0,
-                        key=f"issue_line_{line['id']}",
-                        label_visibility="collapsed",
-                    )
-                    issue_quantities[int(line["id"])] = {
-                        "item_id":   int(line["item_id"]),
-                        "qty":       qty,
-                        "name":      str(line["item_name"]),
-                        "uom":       str(line["uom"]),
-                        "unit_cost": float(line["unit_cost"]),
-                    }
-                else:
-                    c5.markdown("✅ Fully issued")
+            with st.expander("Issuance details", expanded=True):
+                c1, c2, c3 = st.columns(3)
+                c1.text_input("Recipient", value=str(sel_req_row.get('requested_by', '')), disabled=True)
+                c2.text_input("Issued by", value=st.session_state.get("display_name", username), key="iss_by")
+                c3.date_input("Date", value=date.today(), key="iss_date")
+                st.text_input("Note / reason", value=str(sel_req_row.get('purpose', '')), key="iss_note")
 
-            if issue_quantities:
-                if st.button("✅ Confirm & record issuance", type="primary"):
-                    lines_to_issue = [
-                        (lid, v["item_id"], v["qty"])
-                        for lid, v in issue_quantities.items()
-                        if v["qty"] > 0
-                    ]
-                    if not lines_to_issue:
-                        st.warning("Enter at least one quantity greater than zero.")
-                    else:
-                        try:
-                            result = db.issue_against_requisition(
-                                req_id=sel_req_id,
-                                issued_by=st.session_state.get("iss_by", username),
-                                issued_date=str(st.session_state.get("iss_date", date.today())),
-                                note=st.session_state.get("iss_note", ""),
-                                lines_to_issue=lines_to_issue,
-                            )
-                            new_status = result.get("status", "Partially Issued")
-                            issued_lines = result.get("issued_lines", [])
-                            shortfalls = result.get("shortfalls", [])
-                            restock_needed = result.get("restock_needed", [])
-
-                            logger.info(
-                                "Issued against requisition %s by %s — new status: %s",
-                                sel_req_row['ref_number'], username, new_status,
-                            )
-                            unit_cost_by_item = {v["item_id"]: v["unit_cost"] for v in issue_quantities.values()}
-                            slip_items = [
-                                {
-                                    "name":      line["item_name"],
-                                    "qty":       line["qty"],
-                                    "uom":       line["uom"],
-                                    "unit_cost": unit_cost_by_item.get(line["item_id"], 0.0),
-                                }
-                                for line in issued_lines
-                            ]
-                            if slip_items:
-                                slip_num = datetime.now().strftime("%Y%m%d%H%M%S")
-                                st.session_state.last_slip = slip_gen.generate_slip({
-                                    "slip_number":    slip_num,
-                                    "issued_date":    str(st.session_state.get("iss_date", date.today())),
-                                    "recipient":      str(sel_req_row.get('requested_by', '')),
-                                    "issued_by":      st.session_state.get("iss_by", username),
-                                    "note":           st.session_state.get("iss_note", ""),
-                                    "property_name":  str(sel_req_row.get('property_name', '')),
-                                    "storeroom_name": str(sel_req_row.get('storeroom_name', '')),
-                                    "items":          slip_items,
-                                })
-
-                            st.session_state.issue_shortfalls = shortfalls
-                            st.session_state.issue_restock_needed = restock_needed
-
-                            if issued_lines:
-                                st.success(
-                                    f"Stock issued for requisition {sel_req_row['ref_number']}. "
-                                    f"Requisition status: **{new_status}**."
-                                )
-                            else:
-                                st.warning(
-                                    "No stock could be issued right now due to insufficient availability. "
-                                    f"Requisition status remains **{new_status}**."
-                                )
-                            st.rerun()
-                        except ValueError as exc:
-                            st.error(str(exc))
-                        except Exception as exc:
-                            logger.error("issue_against_requisition failed: %s", exc)
-                            st.error(f"Could not record issuance: {exc}")
-
-        # ── Procured / unlisted items ──────────────────────────────────────
-        try:
-            custom_df = db.get_requisition_custom_lines_remaining(sel_req_id)
-        except Exception as exc:
-            logger.error("get_requisition_custom_lines_remaining failed: %s", exc)
-            custom_df = db.pd.DataFrame()
-
-        if not custom_df.empty:
-            ui.section("Procured / unlisted items")
-            st.caption(
-                "These items were requested but were not in stock. "
-                "Once you have received them, mark each as fulfilled to record the issuance "
-                "and add the item to the stock catalogue for future requisitions."
-            )
+            # Load remaining lines for the selected requisition
             try:
-                rooms_df = db.get_storerooms(property_id=sel_prop_id)
-                room_opts = {
-                    f"{r['name']}": int(r['id'])
-                    for _, r in rooms_df.iterrows()
-                } if not rooms_df.empty else {}
-            except Exception:
-                room_opts = {}
+                lines_df = db.get_requisition_lines_remaining(sel_req_id)
+            except Exception as exc:
+                logger.error("get_requisition_lines_remaining failed: %s", exc)
+                st.error("Could not load requisition lines.")
+                lines_df = db.pd.DataFrame()
 
-            _CATEGORIES = ["Cleaning", "Electrical", "Maintenance", "Plumbing", "Safety", "General", "Other"]
-            _PLACEHOLDER_ROOM = "— Select storeroom —"
+            if lines_df.empty:
+                st.warning("This requisition has no approved stocked items remaining to issue.")
+            else:
+                ui.section("Items to issue")
+                hdr = st.columns([3, 2, 1, 1, 1, 1])
+                for col, lbl in zip(hdr, ["Item", "Unit / Area", "UOM", "Approved", "Already issued", "Issue now"]):
+                    col.markdown(f"**{lbl}**")
 
-            for _, cline in custom_df.iterrows():
-                if float(cline["qty_remaining"]) <= 0:
-                    continue
-                with st.expander(
-                    f"📦 {cline['item_name']} — {int(cline['qty_approved'])} {cline['uom']}  *(pending procurement)*",
-                    expanded=True,
-                ):
-                    if cline["notes"]:
-                        st.caption(f"Notes / specs: {cline['notes']}")
-                    with st.form(f"custom_fulfill_{int(cline['id'])}"):
-                        cf1, cf2, cf3 = st.columns(3)
-                        room_sel = cf1.selectbox(
-                            "Add to storeroom *",
-                            [_PLACEHOLDER_ROOM] + list(room_opts.keys()),
+                issue_quantities = {}
+                for _, line in lines_df.iterrows():
+                    c1, c_loc, c2, c3, c4, c5 = st.columns([3, 2, 1, 1, 1, 1])
+                    c1.markdown(str(line["item_name"]))
+                    c_loc.markdown(str(line.get("location_name") or "—"))
+                    c2.markdown(str(line["uom"]))
+                    approved = float(line["qty_approved"])
+                    dispersed = float(line["qty_dispersed"])
+                    remaining = float(line["qty_remaining"])
+                    c3.markdown(str(int(approved)))
+                    c4.markdown(str(int(dispersed)))
+                    if remaining > 0:
+                        qty = c5.number_input(
+                            "", min_value=0.0, max_value=remaining,
+                            value=remaining, step=1.0,
+                            key=f"issue_line_{line['id']}",
+                            label_visibility="collapsed",
                         )
-                        cat_sel = cf2.selectbox("Category", _CATEGORIES)
-                        cost_sel = cf3.number_input("Unit cost (R)", min_value=0.0, step=0.50)
-                        if st.form_submit_button("✅ Mark as received & issue", type="primary"):
-                            if room_sel == _PLACEHOLDER_ROOM:
-                                st.warning("Please select a storeroom to assign this item to.")
-                            else:
-                                try:
-                                    new_status, new_item_id = db.mark_custom_line_fulfilled(
-                                        line_id=int(cline['id']),
-                                        issued_by=st.session_state.get("iss_by", username),
-                                        req_id=sel_req_id,
-                                        storeroom_id=room_opts[room_sel],
-                                        category=cat_sel,
-                                        unit_cost=cost_sel,
-                                        issued_date=str(st.session_state.get("iss_date", date.today())),
-                                        note=st.session_state.get("iss_note", ""),
-                                    )
-                                    logger.info(
-                                        "Custom line %s fulfilled by %s, item_id=%s, req status=%s",
-                                        cline['id'], username, new_item_id, new_status
-                                    )
+                        issue_quantities[int(line["id"])] = {
+                            "item_id":   int(line["item_id"]),
+                            "qty":       qty,
+                            "name":      str(line["item_name"]),
+                            "uom":       str(line["uom"]),
+                            "unit_cost": float(line["unit_cost"]),
+                        }
+                    else:
+                        c5.markdown("✅ Fully issued")
+
+                if issue_quantities:
+                    if st.button("✅ Confirm & record issuance", type="primary"):
+                        lines_to_issue = [
+                            (lid, v["item_id"], v["qty"])
+                            for lid, v in issue_quantities.items()
+                            if v["qty"] > 0
+                        ]
+                        if not lines_to_issue:
+                            st.warning("Enter at least one quantity greater than zero.")
+                        else:
+                            try:
+                                result = db.issue_against_requisition(
+                                    req_id=sel_req_id,
+                                    issued_by=st.session_state.get("iss_by", username),
+                                    issued_date=str(st.session_state.get("iss_date", date.today())),
+                                    note=st.session_state.get("iss_note", ""),
+                                    lines_to_issue=lines_to_issue,
+                                )
+                                new_status = result.get("status", "Partially Issued")
+                                issued_lines = result.get("issued_lines", [])
+                                shortfalls = result.get("shortfalls", [])
+                                restock_needed = result.get("restock_needed", [])
+
+                                logger.info(
+                                    "Issued against requisition %s by %s — new status: %s",
+                                    sel_req_row['ref_number'], username, new_status,
+                                )
+                                unit_cost_by_item = {v["item_id"]: v["unit_cost"] for v in issue_quantities.values()}
+                                slip_items = [
+                                    {
+                                        "name":      line["item_name"],
+                                        "qty":       line["qty"],
+                                        "uom":       line["uom"],
+                                        "unit_cost": unit_cost_by_item.get(line["item_id"], 0.0),
+                                    }
+                                    for line in issued_lines
+                                ]
+                                if slip_items:
+                                    slip_num = datetime.now().strftime("%Y%m%d%H%M%S")
+                                    st.session_state.last_slip = slip_gen.generate_slip({
+                                        "slip_number":    slip_num,
+                                        "issued_date":    str(st.session_state.get("iss_date", date.today())),
+                                        "recipient":      str(sel_req_row.get('requested_by', '')),
+                                        "issued_by":      st.session_state.get("iss_by", username),
+                                        "note":           st.session_state.get("iss_note", ""),
+                                        "property_name":  str(sel_req_row.get('property_name', '')),
+                                        "storeroom_name": str(sel_req_row.get('storeroom_name', '')),
+                                        "items":          slip_items,
+                                    })
+
+                                st.session_state.issue_shortfalls = shortfalls
+                                st.session_state.issue_restock_needed = restock_needed
+
+                                if issued_lines:
                                     st.success(
-                                        f"'{cline['item_name']}' added to stock catalogue and issued. "
+                                        f"Stock issued for requisition {sel_req_row['ref_number']}. "
                                         f"Requisition status: **{new_status}**."
                                     )
-                                    st.rerun()
-                                except Exception as exc:
-                                    logger.error("mark_custom_line_fulfilled failed: %s", exc)
-                                    st.error(f"Could not complete: {exc}")
+                                else:
+                                    st.warning(
+                                        "No stock could be issued right now due to insufficient availability. "
+                                        f"Requisition status remains **{new_status}**."
+                                    )
+                                st.rerun()
+                            except ValueError as exc:
+                                st.error(str(exc))
+                            except Exception as exc:
+                                logger.error("issue_against_requisition failed: %s", exc)
+                                st.error(f"Could not record issuance: {exc}")
+
+            # ── Procured / unlisted items ──────────────────────────────────────
+            try:
+                custom_df = db.get_requisition_custom_lines_remaining(sel_req_id)
+            except Exception as exc:
+                logger.error("get_requisition_custom_lines_remaining failed: %s", exc)
+                custom_df = db.pd.DataFrame()
+
+            if not custom_df.empty:
+                ui.section("Procured / unlisted items")
+                st.caption(
+                    "These items were requested but were not in stock. "
+                    "Once you have received them, mark each as fulfilled to record the issuance "
+                    "and add the item to the stock catalogue for future requisitions."
+                )
+                try:
+                    rooms_df = db.get_storerooms(property_id=sel_prop_id)
+                    room_opts = {
+                        f"{r['name']}": int(r['id'])
+                        for _, r in rooms_df.iterrows()
+                    } if not rooms_df.empty else {}
+                except Exception:
+                    room_opts = {}
+
+                _CATEGORIES = ["Cleaning", "Electrical", "Maintenance", "Plumbing", "Safety", "General", "Other"]
+                _PLACEHOLDER_ROOM = "— Select storeroom —"
+
+                for _, cline in custom_df.iterrows():
+                    if float(cline["qty_remaining"]) <= 0:
+                        continue
+                    with st.expander(
+                        f"📦 {cline['item_name']} — {int(cline['qty_approved'])} {cline['uom']} · {cline.get('location_name') or '—'}  *(pending procurement)*",
+                        expanded=True,
+                    ):
+                        if cline["notes"]:
+                            st.caption(f"Notes / specs: {cline['notes']}")
+                        with st.form(f"custom_fulfill_{int(cline['id'])}"):
+                            cf1, cf2, cf3 = st.columns(3)
+                            room_sel = cf1.selectbox(
+                                "Add to storeroom *",
+                                [_PLACEHOLDER_ROOM] + list(room_opts.keys()),
+                            )
+                            cat_sel = cf2.selectbox("Category", _CATEGORIES)
+                            cost_sel = cf3.number_input("Unit cost (R)", min_value=0.0, step=0.50)
+                            if st.form_submit_button("✅ Mark as received & issue", type="primary"):
+                                if room_sel == _PLACEHOLDER_ROOM:
+                                    st.warning("Please select a storeroom to assign this item to.")
+                                else:
+                                    try:
+                                        new_status, new_item_id = db.mark_custom_line_fulfilled(
+                                            line_id=int(cline['id']),
+                                            issued_by=st.session_state.get("iss_by", username),
+                                            req_id=sel_req_id,
+                                            storeroom_id=room_opts[room_sel],
+                                            category=cat_sel,
+                                            unit_cost=cost_sel,
+                                            issued_date=str(st.session_state.get("iss_date", date.today())),
+                                            note=st.session_state.get("iss_note", ""),
+                                        )
+                                        logger.info(
+                                            "Custom line %s fulfilled by %s, item_id=%s, req status=%s",
+                                            cline['id'], username, new_item_id, new_status
+                                        )
+                                        st.success(
+                                            f"'{cline['item_name']}' added to stock catalogue and issued. "
+                                            f"Requisition status: **{new_status}**."
+                                        )
+                                        st.rerun()
+                                    except Exception as exc:
+                                        logger.error("mark_custom_line_fulfilled failed: %s", exc)
+                                        st.error(f"Could not complete: {exc}")
 
     if st.session_state.get("issue_shortfalls"):
         ui.section("Items not fully issued")

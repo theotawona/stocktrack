@@ -11,6 +11,7 @@ services:
       - stocktrack-data:/app/data
     environment:
       - DB_PATH=/app/data/stock_tracker.db
+      - USERS_YAML_PATH=/app/data/users.yaml
       - SEED_DEMO=false
       - STREAMLIT_SERVER_HEADLESS=true
       - STREAMLIT_SERVER_PORT=8501

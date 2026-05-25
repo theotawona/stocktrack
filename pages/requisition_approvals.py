@@ -42,6 +42,8 @@ def render_requisition_approvals(username, sel_prop_id, _safe_int):
 	date_from = fc2.date_input("From", value=None, key="appr_date_from")
 	date_to   = fc3.date_input("To",   value=None, key="appr_date_to")
 
+	requestor_filter = "All"
+
 	try:
 		reqs = db.get_requisitions(
 			status=None if status_filter == "All" else status_filter,
@@ -54,8 +56,23 @@ def render_requisition_approvals(username, sel_prop_id, _safe_int):
 		st.error("Could not load requisitions.")
 		reqs = pd.DataFrame()
 
+	if not reqs.empty:
+		requestors = sorted(reqs["requested_by"].dropna().astype(str).unique().tolist())
+		requestor_filter = st.selectbox(
+			"Filter by requester",
+			["All"] + requestors,
+			key="appr_requestor_filter",
+		)
+
+	# Apply requester filter
+	if not reqs.empty and requestor_filter != "All":
+		reqs = reqs[reqs["requested_by"] == requestor_filter]
+
 	if reqs.empty:
-		st.info(f"No {status_filter.lower()} requisitions.")
+		if requestor_filter != "All":
+			st.info(f"No {status_filter.lower()} requisitions from requester '{requestor_filter}'.")
+		else:
+			st.info(f"No {status_filter.lower()} requisitions.")
 	else:
 		URGENCY_COLOR = {"Normal":"#888780","Urgent":"#BA7517","Critical":"#A32D2D"}
 		for _, row in reqs.iterrows():
@@ -80,12 +97,13 @@ def render_requisition_approvals(username, sel_prop_id, _safe_int):
 
 				approved_qtys = {}
 				if not lines.empty:
-					hdr = st.columns([3, 1, 1, 1, 1])
-					for col, lbl in zip(hdr, ["Item","UOM","Requested","In stock","Approve qty"]):
+					hdr = st.columns([3, 2, 1, 1, 1, 1])
+					for col, lbl in zip(hdr, ["Item","Unit / Area","UOM","Requested","In stock","Approve qty"]):
 						col.markdown(f"**{lbl}**")
 
 					for _, line in lines.iterrows():
-						lc1,lc2,lc3,lc4,lc5 = st.columns([3,1,1,1,1])
+						lc1,lc_loc,lc2,lc3,lc4,lc5 = st.columns([3,2,1,1,1,1])
+						lc_loc.markdown(str(line.get("location_name") or "—"))
 						is_custom = bool(line.get("is_custom", 0))
 						if is_custom:
 							lc1.markdown(
