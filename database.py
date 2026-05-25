@@ -284,6 +284,19 @@ def init_db():
             changed_by TEXT,
             created_at TEXT DEFAULT (datetime('now'))
         );
+        
+        CREATE TABLE IF NOT EXISTS stock_transfers (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            slip_number TEXT,
+            from_storeroom_id INTEGER REFERENCES storerooms(id) ON DELETE SET NULL,
+            to_storeroom_id INTEGER REFERENCES storerooms(id) ON DELETE SET NULL,
+            item_id_from INTEGER REFERENCES items(id) ON DELETE SET NULL,
+            item_id_to INTEGER REFERENCES items(id) ON DELETE SET NULL,
+            qty REAL NOT NULL,
+            transferred_by TEXT,
+            reason TEXT,
+            created_at TEXT DEFAULT (datetime('now'))
+        );
         """)
         # ── Schema migrations ──────────────────────────────────────
         for _col_sql in [
@@ -617,6 +630,32 @@ def delete_storeroom(id):
     with get_conn() as conn:
         conn.execute("DELETE FROM storerooms WHERE id=?", (id,))
 
+
+def duplicate_storeroom(source_storeroom_id, target_property_id, new_name, new_location_notes, created_by=None):
+    """Create a copy of a storeroom under `target_property_id` with all items duplicated at qty=0.
+
+    Returns the new storeroom id.
+    """
+    with get_conn() as conn:
+        src = conn.execute("SELECT * FROM storerooms WHERE id=?", (source_storeroom_id,)).fetchone()
+        if not src:
+            raise ValueError("Source storeroom not found")
+
+        cur = conn.execute("INSERT INTO storerooms (property_id, name, location_notes) VALUES (?,?,?)",
+                           (target_property_id, new_name, new_location_notes))
+        new_id = cur.lastrowid
+
+        # Copy items metadata but set qty to 0 and min_qty preserved
+        rows = conn.execute("SELECT name, category, uom, min_qty, supplier_id, unit_cost, description FROM items WHERE storeroom_id=?",
+                            (source_storeroom_id,)).fetchall()
+        for r in rows:
+            conn.execute(
+                "INSERT INTO items (storeroom_id, name, category, uom, qty, min_qty, supplier_id, unit_cost, description, updated_at) VALUES (?,?,?,?,?,?,?,?,?,datetime('now'))",
+                (new_id, r["name"], r["category"], r["uom"], 0, r["min_qty"] or 0, r["supplier_id"] or None, r["unit_cost"] or 0, r["description"] or ""),
+            )
+
+        return new_id
+
 # ── Suppliers ────────────────────────────────────────────────
 def get_suppliers():
     with get_conn() as conn:
@@ -719,6 +758,91 @@ def adjust_qty(item_id, delta, new_unit_cost=None, changed_by=None, reason=None)
                 "INSERT INTO cost_history (item_id, cost_before, cost_after, qty_delta, reason, changed_by) VALUES (?,?,?,?,?,?)",
                 (item_id, cost_before, cost_after, delta, reason, changed_by))
     return qty_before, qty_after, cost_before, cost_after
+
+
+def transfer_stock(item_id_from, to_storeroom_id, qty, transferred_by=None, reason=None, slip_number=None):
+    """Transfer stock from one storeroom item to another storeroom.
+
+    - Decrements qty from the source item (clamped to 0)
+    - Increments qty on a matching item in the destination storeroom (by name+uom), creating it if missing
+    - Applies weighted-average costing when adding to an existing destination item
+    - Logs a row in `stock_transfers`
+    """
+    if qty <= 0:
+        raise ValueError("Quantity must be positive")
+
+    with get_conn() as conn:
+        src = conn.execute("SELECT * FROM items WHERE id=?", (item_id_from,)).fetchone()
+        if not src:
+            raise ValueError("Source item not found")
+        src_qty = float(src["qty"] or 0.0)
+        if src_qty < float(qty):
+            raise ValueError("Insufficient quantity in source")
+
+        name = src["name"]
+        uom = src["uom"]
+        unit_cost_in = float(src["unit_cost"] or 0.0)
+        category = src["category"]
+        supplier_id = src["supplier_id"]
+        description = src["description"]
+        from_storeroom = src["storeroom_id"]
+
+        # Deduct from source
+        conn.execute("UPDATE items SET qty = MAX(0, qty - ?), updated_at=datetime('now') WHERE id=?", (qty, item_id_from))
+
+        # Find matching item in destination by name + uom
+        tgt = conn.execute(
+            "SELECT id, qty, unit_cost FROM items WHERE storeroom_id=? AND name=? AND uom=? LIMIT 1",
+            (to_storeroom_id, name, uom),
+        ).fetchone()
+
+        item_id_to = None
+        if tgt:
+            item_id_to = int(tgt["id"])
+            qty_before = float(tgt["qty"] or 0.0)
+            cost_before = float(tgt["unit_cost"] or 0.0)
+            # Weighted average if both have qty and incoming cost present
+            if unit_cost_in is not None and qty > 0 and qty_before > 0:
+                total_qty = qty_before + float(qty)
+                weighted_cost = ((qty_before * cost_before) + (float(qty) * unit_cost_in)) / total_qty
+                new_cost = round(weighted_cost, 2)
+            else:
+                new_cost = unit_cost_in
+
+            conn.execute("UPDATE items SET qty = qty + ?, unit_cost = ?, updated_at=datetime('now') WHERE id=?", (qty, new_cost, item_id_to))
+
+            # Log cost change if changed
+            if new_cost != cost_before:
+                conn.execute(
+                    "INSERT INTO cost_history (item_id, cost_before, cost_after, qty_delta, reason, changed_by) VALUES (?,?,?,?,?,?)",
+                    (item_id_to, cost_before, new_cost, qty, reason or 'Transfer in', transferred_by),
+                )
+        else:
+            # Create a new item in the destination storeroom
+            cur = conn.execute(
+                """INSERT INTO items
+                    (storeroom_id, name, category, uom, qty, min_qty, supplier_id, unit_cost, description, updated_at)
+                    VALUES (?,?,?,?,?,?,?,?,?,datetime('now'))""",
+                (to_storeroom_id, name, category or 'General', uom, qty, 0, supplier_id or None, unit_cost_in, description or ""),
+            )
+            item_id_to = cur.lastrowid
+            if unit_cost_in and unit_cost_in > 0:
+                conn.execute(
+                    "INSERT INTO cost_history (item_id, cost_before, cost_after, qty_delta, reason, changed_by) VALUES (?,?,?,?,?,?)",
+                    (item_id_to, 0.0, unit_cost_in, qty, reason or 'Transfer in', transferred_by),
+                )
+
+        # Log the transfer
+        conn.execute(
+            "INSERT INTO stock_transfers (slip_number, from_storeroom_id, to_storeroom_id, item_id_from, item_id_to, qty, transferred_by, reason) VALUES (?,?,?,?,?,?,?,?)",
+            (slip_number, from_storeroom, to_storeroom_id, item_id_from, item_id_to, qty, transferred_by, reason),
+        )
+
+        return {
+            "from_item": item_id_from,
+            "to_item": item_id_to,
+            "qty": qty,
+        }
 
 def delete_item(id):
     with get_conn() as conn:

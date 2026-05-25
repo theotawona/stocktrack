@@ -146,6 +146,42 @@ def render_storerooms(username, sel_prop_id, _safe_int, _prop_opts):
                                                     st.error("Could not adjust item.")
                                     else:
                                         st.info("No items to adjust in this storeroom.")
+
+                                st.markdown("---")
+                                st.subheader("Transfer stock to another storeroom")
+                                with st.form(f"transfer_stock_{room_id}", clear_on_submit=True):
+                                    if stock_item_opts:
+                                        t_item = st.selectbox("Item", ["-- Select item --"] + list(stock_item_opts.keys()), key=f"transfer_item_{room_id}")
+                                        # Destination storerooms (exclude current)
+                                        all_rooms = db.get_storerooms()
+                                        dest_opts = {f"{r['property_name']} — {r['name']}": _safe_int(r['id']) for _, r in all_rooms.iterrows() if _safe_int(r['id']) != room_id}
+                                        if dest_opts:
+                                            t_dest = st.selectbox("Destination storeroom", ["-- Select --"] + list(dest_opts.keys()), key=f"transfer_dest_{room_id}")
+                                        else:
+                                            t_dest = None
+                                        t_qty = st.number_input("Quantity to transfer", min_value=0.0, step=1.0, key=f"transfer_qty_{room_id}")
+                                        t_slip = st.text_input("Slip / reference", key=f"transfer_slip_{room_id}")
+                                        t_reason = st.text_input("Reason", key=f"transfer_reason_{room_id}")
+                                        if st.form_submit_button("Transfer"):
+                                            if t_item == "-- Select item --":
+                                                st.warning("Choose an item to transfer.")
+                                            elif not t_dest or t_dest == "-- Select --":
+                                                st.warning("Choose a destination storeroom.")
+                                            elif t_qty <= 0:
+                                                st.warning("Enter a positive quantity to transfer.")
+                                            else:
+                                                src_item_id = stock_item_opts[t_item]
+                                                dest_room_id = dest_opts[t_dest]
+                                                try:
+                                                    db.transfer_stock(src_item_id, dest_room_id, t_qty, transferred_by=username, reason=t_reason.strip() or "Transfer", slip_number=t_slip.strip() or None)
+                                                    logger.info("Transferred %s of item %s from storeroom %s to %s by %s", t_qty, src_item_id, room_id, dest_room_id, username)
+                                                    st.success("Transfer completed.")
+                                                    st.rerun()
+                                                except Exception as exc:
+                                                    logger.error("transfer_stock failed: %s", exc)
+                                                    st.error(f"Could not transfer stock: {exc}")
+                                    else:
+                                        st.info("No items to transfer in this storeroom.")
                     except Exception as exc:
                         logger.error("items for storeroom %s failed: %s", room_id, exc)
 
@@ -203,6 +239,29 @@ def render_storerooms(username, sel_prop_id, _safe_int, _prop_opts):
                             except Exception as exc:
                                 logger.error("delete_storeroom %s failed: %s", room_id, exc)
                                 st.error("Could not delete storeroom.")
+
+                    st.markdown("---")
+                    st.subheader("Duplicate this storeroom (quantities set to 0)")
+                    with st.form(f"duplicate_room_{room_id}"):
+                        # Allow selecting property to duplicate into (default current)
+                        prop_names = list(prop_opts.keys())
+                        current_property_label = row["property_name"]
+                        sel_prop = st.selectbox("Target property", prop_names, index=prop_names.index(current_property_label) if current_property_label in prop_names else 0)
+                        dup_name = st.text_input("New storeroom name", value=f"{row['name']} (Copy)")
+                        dup_loc = st.text_input("Location notes", value=str(row["location_notes"] or ""))
+                        confirm_dup = st.checkbox("I understand this will create a new storeroom with the same items but zero quantities.", key=f"dup_confirm_{room_id}")
+                        if st.form_submit_button("Duplicate", type="primary"):
+                            if not confirm_dup:
+                                st.warning("Please confirm duplication before proceeding.")
+                            else:
+                                try:
+                                    new_id = db.duplicate_storeroom(room_id, prop_opts[sel_prop], dup_name.strip(), dup_loc.strip(), created_by=username)
+                                    logger.info("Storeroom %s duplicated to %s by %s", room_id, new_id, username)
+                                    st.success(f"Storeroom duplicated (ID: {new_id}).")
+                                    st.rerun()
+                                except Exception as exc:
+                                    logger.error("duplicate_storeroom failed: %s", exc)
+                                    st.error(f"Could not duplicate storeroom: {exc}")
     else:
         st.info("No storerooms yet. Add one below.")
 

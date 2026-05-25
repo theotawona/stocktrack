@@ -105,6 +105,18 @@ class TestStorerooms:
         assert rid not in db.get_storerooms(pid)["id"].values
         assert db.get_items(storeroom_id=rid).empty
 
+    def test_duplicate_storeroom_zeroes_qty(self):
+        pid = int(db.get_properties().iloc[0]["id"])
+        db.add_storeroom(pid, "DupSource", "")
+        sid = int(db.get_storerooms()[db.get_storerooms()["name"] == "DupSource"]["id"].values[0])
+        # add two items with qty
+        db.add_item(sid, "DItem1", "General", "units", 5, 1, None, 2.0, "")
+        db.add_item(sid, "DItem2", "General", "boxes", 3, 1, None, 1.0, "")
+        new_sid = db.duplicate_storeroom(sid, pid, "DupTarget", "")
+        items_new = db.get_items(storeroom_id=new_sid)
+        assert not items_new.empty
+        assert all(items_new["qty"] == 0)
+
 
 # ── Items ─────────────────────────────────────────────────────
 class TestItems:
@@ -351,3 +363,39 @@ class TestReconciliation:
         db.save_reconciliation(sid, "Tester", "2026-03-01", "", [(iid, 5.0, 3.0)])
         hist = db.get_reconciliation_history(storeroom_id=sid)
         assert not hist.empty
+
+
+class TestTransfers:
+    def test_transfer_creates_target(self):
+        pid = int(db.get_properties().iloc[0]["id"])
+        sid_from = int(db.get_storerooms().iloc[0]["id"])
+        db.add_storeroom(pid, "TargetRoom", "")
+        sid_to = int(db.get_storerooms()[db.get_storerooms()["name"] == "TargetRoom"]["id"].values[0])
+        db.add_item(sid_from, "TransferItem", "General", "units", 10, 1, None, 2.5, "")
+        src = db.get_items(storeroom_id=sid_from)
+        iid_from = int(src[src["name"] == "TransferItem"]["id"].values[0])
+        db.transfer_stock(iid_from, sid_to, 4, transferred_by="tester", reason="move", slip_number="SLIP1")
+        after_src = db.get_items(storeroom_id=sid_from)
+        row_src = after_src[after_src["id"] == iid_from].iloc[0]
+        assert float(row_src["qty"]) == 6.0
+        tgt = db.get_items(storeroom_id=sid_to)
+        tgt_row = tgt[tgt["name"] == "TransferItem"].iloc[0]
+        assert float(tgt_row["qty"]) == 4.0
+
+    def test_transfer_to_existing_updates_qty_and_cost(self):
+        sid_from = int(db.get_storerooms().iloc[0]["id"])
+        pid = int(db.get_properties().iloc[0]["id"])
+        db.add_storeroom(pid, "OtherRoom", "")
+        sid_to = int(db.get_storerooms()[db.get_storerooms()["name"] == "OtherRoom"]["id"].values[0])
+        # Add existing item in target with qty 5 and cost 1.0
+        db.add_item(sid_to, "MergeItem", "General", "units", 5, 1, None, 1.0, "")
+        # Add source item with same name and uom, higher cost
+        db.add_item(sid_from, "MergeItem", "General", "units", 3, 1, None, 3.0, "")
+        src = db.get_items(storeroom_id=sid_from)
+        iid_from = int(src[src["name"] == "MergeItem"]["id"].values[0])
+        # Transfer 2 units (incoming cost 3.0) -> target should have qty 7 and weighted cost ((5*1)+(2*3))/7 = 1.57 -> 1.57 rounded
+        db.transfer_stock(iid_from, sid_to, 2, transferred_by="tester", reason="merge")
+        tgt = db.get_items(storeroom_id=sid_to)
+        tgt_row = tgt[tgt["name"] == "MergeItem"].iloc[0]
+        assert float(tgt_row["qty"]) == 7.0
+        assert round(float(tgt_row["unit_cost"]), 2) == round(((5*1.0)+(2*3.0))/7.0, 2)
