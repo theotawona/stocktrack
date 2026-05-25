@@ -608,9 +608,10 @@ def add_storeroom(property_id, name, location_notes):
         conn.execute("INSERT INTO storerooms (property_id, name, location_notes) VALUES (?,?,?)",
                      (property_id, name, location_notes))
 
-def update_storeroom(id, name, location_notes):
+def update_storeroom(id, property_id, name, location_notes):
     with get_conn() as conn:
-        conn.execute("UPDATE storerooms SET name=?, location_notes=? WHERE id=?", (name, location_notes, id))
+        conn.execute("UPDATE storerooms SET property_id=?, name=?, location_notes=? WHERE id=?",
+                     (property_id, name, location_notes, id))
 
 def delete_storeroom(id):
     with get_conn() as conn:

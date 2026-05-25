@@ -4,9 +4,14 @@ import database as db
 import validators as v
 from logger import logger
 
+_CATEGORIES = ["Cleaning", "Electrical", "Maintenance", "Plumbing", "Safety", "General", "Other"]
+_UOMS = ["units", "rolls", "bottles", "boxes", "packs", "litres", "kg", "metres", "tins", "pairs"]
+
 def render_storerooms(username, sel_prop_id, _safe_int, _prop_opts):
     ui.page_header("Storerooms", "Manage storeroom locations per property")
     logger.debug("Rendering Storerooms for %s", username)
+    import auth as auth_module
+    role = auth_module.current_role() if hasattr(auth_module, 'current_role') else st.session_state.get('role', 'staff')
 
     try:
         rooms_df = db.get_storerooms(sel_prop_id)
@@ -16,6 +21,7 @@ def render_storerooms(username, sel_prop_id, _safe_int, _prop_opts):
         rooms_df = db.pd.DataFrame()
 
     if not rooms_df.empty:
+        prop_opts = _prop_opts()
         for _, row in rooms_df.iterrows():
             room_id = _safe_int(row["id"])
             with st.expander(
@@ -27,25 +33,152 @@ def render_storerooms(username, sel_prop_id, _safe_int, _prop_opts):
                     st.markdown(f"**Location:** {row['location_notes'] or '—'}")
                     try:
                         items_in_room = db.get_items(storeroom_id=room_id)
+                        stock_cols = ["name","category","qty","uom","status","unit_cost"]
                         if not items_in_room.empty:
-                            disp = items_in_room[["name","category","qty","uom","status","unit_cost"]].copy()
+                            disp = items_in_room[stock_cols].copy()
                             disp.columns = ["Item","Category","Qty","UOM","Status","Unit cost (R)"]
                             st.dataframe(disp, width='stretch', hide_index=True)
+                        else:
+                            disp = db.pd.DataFrame(columns=["Item","Category","Qty","UOM","Status","Unit cost (R)"])
+                            st.info("No items in this storeroom yet.")
+
+                        ui.export_csv(disp, f"storeroom_{room_id}_stock.csv")
+                        stock_item_opts = {
+                            f"{r['name']} ({r['qty']} {r['uom']})": _safe_int(r['id'])
+                            for _, r in items_in_room.iterrows()
+                        }
+                        if role != "staff":
+                            sup_opts = {"None": None}
+                            for _, sup in db.get_suppliers().iterrows():
+                                sup_opts[sup["name"]] = _safe_int(sup["id"])
+
+                            with st.expander("Stock actions", expanded=False):
+                                st.subheader("Add stock to this storeroom")
+                                with st.form(f"add_room_stock_{room_id}", clear_on_submit=True):
+                                    ac1, ac2, ac3 = st.columns(3)
+                                    item_name = ac1.text_input("Item name *", key=f"add_item_name_{room_id}")
+                                    item_cat  = ac2.selectbox("Category", _CATEGORIES, key=f"add_item_cat_{room_id}")
+                                    item_qty  = ac3.number_input("Quantity", min_value=0.0, step=1.0, key=f"add_item_qty_{room_id}")
+                                    ac4, ac5, ac6 = st.columns(3)
+                                    item_uom  = ac4.selectbox("Unit", _UOMS, key=f"add_item_uom_{room_id}")
+                                    item_min  = ac5.number_input("Low-stock threshold", min_value=0.0, value=1.0, step=1.0, key=f"add_item_min_{room_id}")
+                                    item_cost = ac6.number_input("Unit cost (R)", min_value=0.0, step=0.50, key=f"add_item_cost_{room_id}")
+                                    item_desc = st.text_input("Description / notes", key=f"add_item_desc_{room_id}")
+                                    item_sup  = st.selectbox("Supplier", list(sup_opts.keys()), key=f"add_item_sup_{room_id}")
+                                    if st.form_submit_button("Add item", type="primary"):
+                                        errs = v.validate_item_form(item_name, row["name"], item_qty, item_min, item_cost)
+                                        ok_low, warn_msg = v.min_lte_qty(item_qty, item_min)
+                                        if errs:
+                                            ui.show_errors(errs)
+                                        else:
+                                            if not ok_low:
+                                                st.warning(warn_msg)
+                                            try:
+                                                db.add_item(
+                                                    room_id,
+                                                    item_name.strip(),
+                                                    item_cat,
+                                                    item_uom,
+                                                    item_qty,
+                                                    item_min,
+                                                    sup_opts[item_sup],
+                                                    item_cost,
+                                                    item_desc.strip(),
+                                                    added_by=username,
+                                                )
+                                                logger.info("Added item '%s' to storeroom %s by %s", item_name, room_id, username)
+                                                st.success("Item added to storeroom.")
+                                                st.rerun()
+                                            except Exception as exc:
+                                                logger.error("add_item in storeroom %s failed: %s", room_id, exc)
+                                                st.error("Could not add item.")
+
+                                st.markdown("---")
+                                st.subheader("Delete an item from this storeroom")
+                                with st.form(f"delete_room_stock_{room_id}"):
+                                    if stock_item_opts:
+                                        del_item = st.selectbox("Item", ["-- Select item --"] + list(stock_item_opts.keys()), key=f"del_room_item_{room_id}")
+                                        confirm_delete_item = st.checkbox(
+                                            "I understand this will permanently delete the selected item.",
+                                            key=f"confirm_del_item_{room_id}",
+                                        )
+                                        if st.form_submit_button("Delete item", type="secondary"):
+                                            if del_item == "-- Select item --":
+                                                st.warning("Choose an item to delete.")
+                                            elif not confirm_delete_item:
+                                                st.warning("Please confirm deletion before proceeding.")
+                                            else:
+                                                item_id = stock_item_opts[del_item]
+                                                try:
+                                                    db.delete_item(item_id)
+                                                    logger.warning("Deleted item %s from storeroom %s by %s", item_id, room_id, username)
+                                                    st.success("Item deleted.")
+                                                    st.rerun()
+                                                except Exception as exc:
+                                                    logger.error("delete_item %s failed: %s", item_id, exc)
+                                                    st.error("Could not delete item.")
+                                    else:
+                                        st.info("No items to delete in this storeroom.")
+
+                                st.markdown("---")
+                                st.subheader("Adjust quantity / price")
+                                with st.form(f"adjust_room_stock_{room_id}", clear_on_submit=True):
+                                    if stock_item_opts:
+                                        adj_item = st.selectbox("Item", ["-- Select item --"] + list(stock_item_opts.keys()), key=f"adj_room_item_{room_id}")
+                                        adj_delta = st.number_input("Qty change (+/−)", step=1.0, key=f"adj_room_delta_{room_id}")
+                                        adj_cost = st.number_input("New unit cost (R)", min_value=0.0, step=0.50, value=0.0, key=f"adj_room_cost_{room_id}")
+                                        adj_reason = st.text_input("Reason", key=f"adj_room_reason_{room_id}")
+                                        if st.form_submit_button("Apply adjustment"):
+                                            if adj_item == "-- Select item --":
+                                                st.warning("Please select an item first.")
+                                            elif adj_delta == 0 and adj_cost == 0:
+                                                st.warning("Enter a quantity change and/or a new unit cost.")
+                                            else:
+                                                item_id = stock_item_opts[adj_item]
+                                                cost_arg = adj_cost if adj_cost > 0 else None
+                                                try:
+                                                    db.adjust_qty(item_id, adj_delta, cost_arg, username, adj_reason.strip() or "Storeroom adjustment")
+                                                    logger.info("Adjusted item %s in storeroom %s by %s", item_id, room_id, username)
+                                                    st.success("Item updated.")
+                                                    st.rerun()
+                                                except Exception as exc:
+                                                    logger.error("adjust_qty %s failed: %s", item_id, exc)
+                                                    st.error("Could not adjust item.")
+                                    else:
+                                        st.info("No items to adjust in this storeroom.")
                     except Exception as exc:
                         logger.error("items for storeroom %s failed: %s", room_id, exc)
 
                 with c2:
                     with st.form(f"edit_room_{room_id}"):
+                        current_property_label = row["property_name"]
+                        prop_names = list(prop_opts.keys())
+                        selected_property = st.selectbox(
+                            "Property *",
+                            prop_names,
+                            index=prop_names.index(current_property_label) if current_property_label in prop_names else 0,
+                        )
                         new_name = st.text_input("Name", value=str(row["name"]))
                         new_loc  = st.text_input("Location notes", value=str(row["location_notes"] or ""))
+
+                        moved = selected_property != current_property_label
+                        confirm_move = False
+                        if moved:
+                            st.warning("Moving this storeroom will also move all stock items stored in it to the selected property.")
+                            confirm_move = st.checkbox(
+                                "I understand and want to move this storeroom and its items.",
+                                key=f"move_confirm_{room_id}",
+                            )
+
                         if st.form_submit_button("Save"):
-                            errs = v.validate_storeroom_form(new_name, "placeholder")
-                            errs = [e for e in errs if "Property" not in e]  # property already set
+                            errs = v.validate_storeroom_form(new_name, selected_property)
                             if errs:
                                 ui.show_errors(errs)
+                            elif moved and not confirm_move:
+                                st.warning("Check the confirmation box before moving the storeroom.")
                             else:
                                 try:
-                                    db.update_storeroom(room_id, new_name.strip(), new_loc.strip())
+                                    db.update_storeroom(room_id, prop_opts[selected_property], new_name.strip(), new_loc.strip())
                                     logger.info("Storeroom %s updated by %s", room_id, username)
                                     st.success("Saved.")
                                     st.rerun()
@@ -53,14 +186,23 @@ def render_storerooms(username, sel_prop_id, _safe_int, _prop_opts):
                                     logger.error("update_storeroom failed: %s", exc)
                                     st.error("Could not save changes.")
 
+                    st.markdown("---")
+                    st.warning("Deleting this storeroom will also delete all items stored in it.")
+                    confirm_delete = st.checkbox(
+                        "I understand this will permanently delete the storeroom and its stock items.",
+                        key=f"del_confirm_{room_id}",
+                    )
                     if st.button("\U0001F5D1 Delete", key=f"del_room_{room_id}", type="secondary"):
-                        try:
-                            db.delete_storeroom(room_id)
-                            logger.warning("Storeroom %s deleted by %s", room_id, username)
-                            st.rerun()
-                        except Exception as exc:
-                            logger.error("delete_storeroom %s failed: %s", room_id, exc)
-                            st.error("Could not delete storeroom.")
+                        if not confirm_delete:
+                            st.warning("Please confirm deletion before proceeding.")
+                        else:
+                            try:
+                                db.delete_storeroom(room_id)
+                                logger.warning("Storeroom %s deleted by %s", room_id, username)
+                                st.rerun()
+                            except Exception as exc:
+                                logger.error("delete_storeroom %s failed: %s", room_id, exc)
+                                st.error("Could not delete storeroom.")
     else:
         st.info("No storerooms yet. Add one below.")
 

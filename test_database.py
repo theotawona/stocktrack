@@ -79,10 +79,31 @@ class TestStorerooms:
         db.add_storeroom(pid, "EditMe", "Old loc")
         rooms = db.get_storerooms(pid)
         rid   = int(rooms[rooms["name"] == "EditMe"]["id"].values[0])
-        db.update_storeroom(rid, "Renamed Room", "New loc")
+        db.update_storeroom(rid, pid, "Renamed Room", "New loc")
         rows = db.get_storerooms(pid)
         row  = rows[rows["id"] == rid].iloc[0]
         assert row["name"] == "Renamed Room"
+
+    def test_update_storeroom_property(self):
+        pid  = self._prop_id()
+        other = db.add_property("Other Block", "2 Test St", "")
+        other_id = int(db.get_properties()[db.get_properties()["name"] == "Other Block"]["id"].values[0])
+        db.add_storeroom(pid, "MoveMe", "Old loc")
+        rooms = db.get_storerooms(pid)
+        rid   = int(rooms[rooms["name"] == "MoveMe"]["id"].values[0])
+        db.update_storeroom(rid, other_id, "MoveMe", "Old loc")
+        moved_rows = db.get_storerooms(other_id)
+        assert not moved_rows[moved_rows["id"] == rid].empty
+
+    def test_delete_storeroom_removes_items(self):
+        pid = self._prop_id()
+        db.add_storeroom(pid, "DeleteRoom", "Loc")
+        rooms = db.get_storerooms(pid)
+        rid  = int(rooms[rooms["name"] == "DeleteRoom"]["id"].values[0])
+        db.add_item(rid, "RoomItem", "General", "units", 5, 1, None, 0, "")
+        db.delete_storeroom(rid)
+        assert rid not in db.get_storerooms(pid)["id"].values
+        assert db.get_items(storeroom_id=rid).empty
 
 
 # ── Items ─────────────────────────────────────────────────────
@@ -100,6 +121,15 @@ class TestItems:
         db.add_item(sid, "Test Item", "General", "units", 10, 2, None, 5.0, "desc")
         after  = len(db.get_items(storeroom_id=sid))
         assert after == before + 1
+
+    def test_delete_item(self):
+        sid = self._storeroom_id()
+        db.add_item(sid, "GoneItem", "General", "units", 3, 1, None, 1.0, "desc")
+        item = db.get_items(storeroom_id=sid)
+        iid  = int(item[item["name"] == "GoneItem"]["id"].values[0])
+        db.delete_item(iid)
+        remaining = db.get_items(storeroom_id=sid)
+        assert iid not in remaining["id"].values
 
     def test_item_status_ok(self):
         items = db.get_items()

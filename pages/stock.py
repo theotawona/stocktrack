@@ -243,6 +243,31 @@ def render_stock(username, sel_prop_id, sel_room_id, _safe_int, _room_opts, _sup
                 st.session_state.pop("_new_items_movement", None)
                 st.rerun()
 
+            if not items_df.empty:
+                ui.section("Delete stock item")
+                item_labels = {f"{r['name']} — {r['storeroom_name']} ({r['property_name']})": _safe_int(r['id']) for _, r in items_df.iterrows()}
+                with st.form("delete_item_form"):
+                    del_item_name = st.selectbox("Select item to delete", ["-- Select item --"] + list(item_labels.keys()))
+                    confirm_delete_item = st.checkbox(
+                        "I understand this will permanently delete the selected stock item.",
+                        key="confirm_delete_item",
+                    )
+                    if st.form_submit_button("Delete item", type="secondary"):
+                        if del_item_name == "-- Select item --":
+                            st.warning("Choose an item to delete.")
+                        elif not confirm_delete_item:
+                            st.warning("Please confirm deletion before proceeding.")
+                        else:
+                            item_id = item_labels[del_item_name]
+                            try:
+                                db.delete_item(item_id)
+                                logger.warning("Item %s deleted by %s", item_id, username)
+                                st.success("Item deleted.")
+                                st.rerun()
+                            except Exception as exc:
+                                logger.error("delete_item %s failed: %s", item_id, exc)
+                                st.error("Could not delete item.")
+
         if not items_df.empty:
             _ADJ_REASONS = ["Count correction", "Damage / Loss", "Supplier delivery", "Write-off", "Other"]
 
@@ -258,19 +283,24 @@ def render_stock(username, sel_prop_id, sel_room_id, _safe_int, _room_opts, _sup
                                             help="Cost of the new stock. When adding qty, a weighted average is calculated automatically. Leave at 0 to keep current cost.")
                 reason   = st.selectbox("Reason", _ADJ_REASONS)
                 notes    = st.text_input("Notes (optional)")
-                if st.form_submit_button("Apply", type="primary"):
+
+                if st.form_submit_button("Apply adjustment"):
                     if sel_item == _PLACEHOLDER:
                         st.warning("Please select an item first.")
                     elif delta == 0 and new_cost == 0:
-                        st.warning("No change — enter a quantity change and/or a new unit cost.")
+                        st.warning("Enter a quantity change and/or a new unit cost.")
                     else:
+                        cost_arg = new_cost if new_cost > 0 else None
                         try:
-                            cost_arg = new_cost if new_cost > 0 else None
-                            qty_before, qty_after, cost_before, cost_after = db.adjust_qty(
-                                item_names[sel_item], delta, new_unit_cost=cost_arg,
-                                changed_by=username, reason=reason)
-                            logger.info("Adjusted item %s by %s: qty %+.0f, cost %s→%s",
-                                        item_names[sel_item], username, delta, cost_before, cost_after)
+                            cost_before = float(items_df[items_df["id"] == item_names[sel_item]].iloc[0]["unit_cost"])
+                        except Exception:
+                            cost_before = 0.0
+                        qty_before = float(items_df[items_df["id"] == item_names[sel_item]].iloc[0]["qty"])
+                        try:
+                            db.adjust_qty(item_names[sel_item], username, delta, cost_before, cost_arg)
+                            cost_after = cost_arg if cost_arg is not None else cost_before
+                            qty_after = max(0.0, qty_before + delta)
+                            logger.info("Adjusted item %s by %s: %s", item_names[sel_item], username, delta)
                             parts = []
                             if delta != 0:
                                 sign = "+" if delta > 0 else ""
